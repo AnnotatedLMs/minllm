@@ -1,0 +1,54 @@
+# MinLLM GPT-2 124M Configuration
+# Reproduces the GPT-2 small model architecture
+
+# Model Architecture
+n_layer: 12
+n_head: 12
+n_embd: 768
+n_head_dim: 64  # n_embd // n_head
+vocab_size: 50304  # GPT-2 vocab padded to nearest multiple of 64
+block_size: 1024
+dropout: 0.0
+bias: false  # True: use bias in Linears and LayerNorms, False: better and faster
+
+# Training
+batch_size: 12
+gradient_accumulation_steps: 40  # 5 * 8 for DDP across 8 GPUs
+max_iters: 600000
+eval_interval: 1000
+eval_iters: 200
+log_interval: 10
+always_save_checkpoint: true
+init_from: 'scratch'  # 'scratch' or 'resume' or 'gpt2*'
+
+# Optimizer
+learning_rate: 6e-4
+weight_decay: 1e-1
+beta1: 0.9
+beta2: 0.95
+grad_clip: 1.0  # clip gradients at this value, 0.0 = no clipping
+
+# Learning Rate Schedule
+decay_lr: true
+warmup_iters: 2000
+lr_decay_iters: 600000  # should be ~= max_iters
+min_lr: 6e-5  # learning_rate / 10
+
+# Data
+dataset: 'openwebtext'
+data_dir: 'data'  # root data directory
+
+# System
+device: 'cuda'  # 'cpu', 'cuda', 'cuda:0', etc.
+dtype: 'bfloat16'  # 'float32', 'bfloat16', or 'float16'
+compile: true  # PyTorch 2.0 compile
+backend: 'nccl'  # DDP backend
+
+# Logging
+out_dir: 'out'
+wandb_log: false
+wandb_project: 'minllm'
+wandb_run_name: 'gpt2'
+
+# Reproducibility
+seed: 1337

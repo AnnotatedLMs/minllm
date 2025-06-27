@@ -1,0 +1,60 @@
+[project]
+name = "minllm"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=3.6.0",
+    "jaxtyping>=0.3.2",
+    "tiktoken>=0.9.0",
+    "torch>=2.7.1",
+    "transformers>=4.53.0",
+    "wandb>=0.20.1",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+]
+ignore = [
+    "E501",  # line too long (handled by line-length)
+    "F722",  # syntax error in forward annotation (jaxtyping)
+    "F821",  # undefined name (jaxtyping)
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9.4",
+]
+
+[tool.isort]
+profile = "black"
+import_heading_stdlib = "Standard Library"
+import_heading_thirdparty = "Third Party"
+import_heading_firstparty = "Project"
+force_single_line = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+]
+torchvision = [
+  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
