@@ -1,5 +1,6 @@
 # Standard Library
 import argparse
+import logging
 import pathlib
 
 # Third Party
@@ -8,6 +9,14 @@ import yaml
 # Project
 from pretraining.gpt.trainers import pretrain
 from pretraining.gpt.utils import config
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+logger = logging.getLogger(__name__)
 
 
 def parse_args():
@@ -31,21 +40,21 @@ def load_yaml_config(config_path):
 def main():
     args = parse_args()
 
-    print(f"Loading config from: {args.config}")
+    logger.info(f"Loading config from: {args.config}")
     config_dict = load_yaml_config(args.config)
 
     trainer_config = config.TrainerConfig(**config_dict)
 
-    print("Initializing trainer...")
+    logger.info("Initializing trainer...")
     gpt_trainer = pretrain.Trainer(trainer_config)
 
-    print("Setting up training components...")
+    logger.info("Setting up training components...")
     gpt_trainer.setup()
 
-    print(f"Starting training for {trainer_config.max_iters} iterations...")
+    logger.info(f"Starting training for {trainer_config.max_iters} iterations...")
     gpt_trainer.train()
 
-    print("Training completed!")
+    logger.info("Training completed!")
 
 
 if __name__ == "__main__":

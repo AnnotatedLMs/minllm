@@ -1,4 +1,5 @@
 # Standard Library
+import logging
 import pathlib
 import typing
 
@@ -8,6 +9,8 @@ import torch.nn as nn
 
 # Project
 from pretraining.gpt.utils import config
+
+logger = logging.getLogger(__name__)
 
 
 class Checkpointer:
@@ -62,7 +65,7 @@ class Checkpointer:
             "config": config,
         }
 
-        print(f"Saving checkpoint to {self.checkpoint_path}")
+        logger.info(f"Saving checkpoint to {self.checkpoint_path}")
 
         # Save to temporary file first, then rename (atomic operation)
         temp_path = self.checkpoint_path.with_suffix(".tmp")
@@ -82,7 +85,7 @@ class Checkpointer:
         if not self.checkpoint_path.exists():
             raise FileNotFoundError(f"No checkpoint found at {self.checkpoint_path}")
 
-        print(f"Loading checkpoint from {self.checkpoint_path}")
+        logger.info(f"Loading checkpoint from {self.checkpoint_path}")
         checkpoint = torch.load(self.checkpoint_path, map_location=device)
 
         return checkpoint
@@ -108,5 +111,5 @@ class Checkpointer:
             "val_loss": val_loss,
         }
 
-        print(f"Saving final model to {final_path}")
+        logger.info(f"Saving final model to {final_path}")
         torch.save(model_state, final_path)

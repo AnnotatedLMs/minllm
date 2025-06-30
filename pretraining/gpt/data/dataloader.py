@@ -1,8 +1,5 @@
-"""
-DataLoader for GPT pretraining with efficient GPU transfer.
-"""
-
 # Standard Library
+import logging
 import pathlib
 import typing
 
@@ -12,6 +9,8 @@ import torch
 
 # Project
 from pretraining.gpt.data import dataset
+
+logger = logging.getLogger(__name__)
 
 
 class PretrainDataLoader:
@@ -40,8 +39,8 @@ class PretrainDataLoader:
         self.train_dataset = dataset.PretrainDataset(data_dir, "train")
         self.val_dataset = dataset.PretrainDataset(data_dir, "val")
 
-        print(f"Train dataset: {len(self.train_dataset):,} tokens")
-        print(f"Val dataset: {len(self.val_dataset):,} tokens")
+        self.logger.info(f"Train dataset: {len(self.train_dataset):,} tokens")
+        self.logger.info(f"Val dataset: {len(self.val_dataset):,} tokens")
 
     def _select_dataset(self, split: typing.Literal["train", "val"]) -> dataset.PretrainDataset:
         """Select the appropriate dataset based on split."""

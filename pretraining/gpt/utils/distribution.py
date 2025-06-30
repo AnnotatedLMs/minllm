@@ -1,9 +1,14 @@
 # Standard Library
+import logging
 import os
 import typing
 
 # Third Party
 import torch.distributed as dist
+
+logger = logging.getLogger(__name__)
+
+# TODO: get rid of env configs, make part of the config yaml
 
 
 def setup_ddp(backend: str = "nccl") -> typing.Tuple[int, int, int]:
@@ -23,7 +28,7 @@ def setup_ddp(backend: str = "nccl") -> typing.Tuple[int, int, int]:
         ddp_local_rank = int(os.environ["LOCAL_RANK"])
         ddp_world_size = int(os.environ["WORLD_SIZE"])
 
-        print(
+        logger.info(
             f"DDP initialized: rank={ddp_rank}, local_rank={ddp_local_rank}, world_size={ddp_world_size}"
         )
     else:

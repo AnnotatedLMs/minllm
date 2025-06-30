@@ -1,9 +1,11 @@
 # Standard Library
 import contextlib
+import logging
 import pathlib
 import time
 
 # Third Party
+import jaxtyping
 import torch
 import wandb
 from torch.backends import cuda
@@ -17,6 +19,8 @@ from pretraining.gpt.utils import checkpointer
 from pretraining.gpt.utils import config
 from pretraining.gpt.utils import distribution
 from pretraining.gpt.utils import lr_scheduler
+
+logger = logging.getLogger(__name__)
 
 
 class Trainer:
@@ -46,7 +50,7 @@ class Trainer:
         self.ddp_world_size = 1
         self.device = config.device
 
-    def setup_distributed(self):
+    def setup_distributed_training(self):
         """Initialize distributed training if running with torchrun."""
         self.ddp_rank, self.ddp_local_rank, self.ddp_world_size = distribution.setup_ddp(
             backend=self.config.backend
@@ -89,7 +93,7 @@ class Trainer:
 
     def init_model(self):
         """Initialize model based on init_from config."""
-        print(f"Initializing model from '{self.config.init_from}'")
+        logger.info(f"Initializing model from '{self.config.init_from}'")
 
         # Try to load vocab size from dataset metadata
         meta_path = pathlib.Path(self.config.data_dir) / self.config.dataset / "meta.pkl"
@@ -101,13 +105,13 @@ class Trainer:
             with open(meta_path, "rb") as f:
                 meta = pickle.load(f)
             meta_vocab_size = meta["vocab_size"]
-            print(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
+            logger.info(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
 
         if self.config.init_from == "scratch":
             # Fresh random init
             vocab_size = meta_vocab_size if meta_vocab_size is not None else self.config.vocab_size
             if meta_vocab_size is None:
-                print(f"defaulting to vocab_size of {vocab_size}")
+                logger.info(f"defaulting to vocab_size of {vocab_size}")
 
             self.model = gpt.GPT(
                 n_layer=self.config.n_layer,
@@ -216,12 +220,12 @@ class Trainer:
             self.iter_num = checkpoint["iter_num"]
             self.best_val_loss = checkpoint["best_val_loss"]
 
-            print(f"Resumed from iteration {self.iter_num}")
+            logger.info(f"Resumed from iteration {self.iter_num}")
 
     def maybe_compile_model(self):
         """Compile model with PyTorch 2.0 if requested."""
         if self.config.compile:
-            print("Compiling model... (takes ~1 minute)")
+            logger.info("Compiling model... (takes ~1 minute)")
             self.model = torch.compile(self.model)
 
     def maybe_wrap_ddp(self):
@@ -241,8 +245,8 @@ class Trainer:
 
         t0 = time.time()
 
-        print(f"Starting training from iteration {self.iter_num}")
-        print(f"Tokens per iteration: {self.get_tokens_per_iter():,}")
+        logger.info(f"Starting training from iteration {self.iter_num}")
+        logger.info(f"Tokens per iteration: {self.get_tokens_per_iter():,}")
 
         running_mfu = -1.0
         local_iter_num = 0
@@ -279,7 +283,7 @@ class Trainer:
     def evaluate_and_checkpoint(self, running_mfu):
         """Run evaluation and save checkpoint if improved."""
         losses = self.estimate_loss()
-        print(
+        logger.info(
             f"step {self.iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
         )
 
@@ -309,6 +313,9 @@ class Trainer:
 
             # Forward pass with autocast
             with self.ctx:
+                logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"]
+                loss: jaxtyping.Float[torch.Tensor, ""]
+
                 logits, loss = self.model(X, Y)
                 # Scale loss by gradient accumulation steps
                 loss = loss / self.config.gradient_accumulation_steps
@@ -358,7 +365,7 @@ class Trainer:
             )
             running_mfu = mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
 
-        print(
+        logger.info(
             f"iter {self.iter_num}: loss {lossf:.4f}, "
             f"time {dt * 1000:.2f}ms, mfu {running_mfu * 100:.2f}%"
         )
@@ -434,7 +441,7 @@ class Trainer:
         Separated from train() for clarity and flexibility.
         """
         # Environment setup
-        self.setup_distributed()
+        self.setup_distributed_training()
         self.setup_device()
         self.setup_directories()
         self.set_seed()
@@ -449,10 +456,11 @@ class Trainer:
 
         # Resume from checkpoint if requested
         self.maybe_resume_training()
-        # Compile model if requested
+
+        # Wrap and/or compile model if needed
         self.maybe_compile_model()
-        # Wrap model in DDP if distributed
         self.maybe_wrap_ddp()
+
         # Setup wandb logging if enabled
         if self.config.wandb_log and distribution.is_main_process():
             wandb.init(
@@ -461,7 +469,7 @@ class Trainer:
                 config=vars(self.config),
             )
 
-        print("Setup complete. Ready to train.")
+        logger.info("Setup complete. Ready to train.")
 
     def train(self):
         """
