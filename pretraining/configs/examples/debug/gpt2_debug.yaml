@@ -1,0 +1,129 @@
+# GPT-2 Debug Configuration (Tiny model for testing)
+
+model:
+  architecture: gpt2
+
+  # Weight initialization
+  weight_init:
+    strategy: gpt2
+    std: 0.02
+    residual_pattern: 'c_proj.weight'
+    position_init_std: 0.02
+
+  # Token embeddings
+  token_embedding:
+    vocab_size: 1000  # Tiny vocab
+    embedding_dim: 64  # Tiny dim
+    embedding_dropout: 0.0
+    init_std: 0.02
+
+  # Position embeddings (GPT-2 uses learned position embeddings)
+  position_embedding:
+    max_position_embeddings: 128
+    embedding_dim: 64
+    init_std: 0.02
+
+  # Transformer backbone
+  transformer_backbone:
+    vocab_size: 1000
+    hidden_dim: 64
+    n_layers: 2  # Just 2 layers
+    block_size: 128
+    dropout: 0.0
+    bias: true
+
+    # Layer normalization
+    normalization:
+      norm_type: layer_norm
+      norm_eps: 0.00001  # 1e-5
+      bias: true
+
+    # Multi-head attention
+    attention:
+      attention_type: multi_head
+      num_heads: 4
+      dropout: 0.0
+      bias: true
+      max_seq_length: 128
+      is_causal: true
+
+    # Feed-forward network
+    ffn:
+      ffn_type: mlp
+      intermediate_dim: 256  # 4 * hidden_dim
+      activation: gelu
+      dropout: 0.0
+      bias: true
+
+  # Output head
+  output_head:
+    tie_word_embeddings: true
+    lm_head_bias: false
+
+# Training configuration
+training:
+  # Batch settings
+  batch_size: 2
+  gradient_accumulation_steps: 1
+  max_iters: 10
+  log_interval: 1
+  seed: 1337
+
+  # Learning rate schedule
+  lr_warmup_iters: 2
+  lr_decay_iters: 10
+  min_lr: 0.00006
+
+  # Evaluation
+  eval_interval: 5
+  eval_iters: 2
+
+# Optimizer configuration
+optimizer:
+  optimizer_type: adamw
+  learning_rate: 0.0006
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eps: 0.00000001
+  parameter_grouping: dimension
+
+# Learning rate schedule
+lr_schedule:
+  schedule_type: cosine
+  warmup_iters: 2
+  lr_decay_iters: 10
+  min_lr: 0.00006
+
+# Checkpointing
+checkpointing:
+  save_dir: ./checkpoints/debug/gpt2
+  save_interval: 10
+  save_best: false
+  keep_last_n: 1
+
+# Data configuration
+data:
+  dataset: debug
+  data_dir: ./data/debug
+  train_split: 0.9
+  val_split: 0.1
+  num_workers: 1
+  pin_memory: false
+
+# System configuration
+system:
+  device: cpu  # Use CPU for debug
+  torch_dtype: float32
+  compile: false
+  distributed: false
+  backend: nccl
+  find_unused_parameters: false
+
+# Logging configuration
+logging:
+  enabled: false
+  project: debug
+  run_name: debug-gpt2
+  log_model: false

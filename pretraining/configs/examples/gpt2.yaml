@@ -1,0 +1,131 @@
+# GPT-2 124M Configuration
+# Based on the original GPT-2 paper and OpenAI's implementation
+
+model:
+  architecture: gpt2
+
+  # Weight initialization
+  weight_init:
+    strategy: gpt2
+    std: 0.02
+    residual_pattern: 'c_proj.weight'
+    position_init_std: 0.02
+
+  # Token embeddings
+  token_embedding:
+    vocab_size: 50257  # Original GPT-2 vocab size
+    embedding_dim: 768
+    embedding_dropout: 0.0
+    init_std: 0.02
+
+  # Position embeddings (GPT-2 uses learned position embeddings)
+  position_embedding:
+    max_position_embeddings: 1024
+    embedding_dim: 768
+    init_std: 0.02
+
+  # Transformer backbone
+  transformer_backbone:
+    vocab_size: 50257
+    hidden_dim: 768
+    n_layers: 12
+    block_size: 1024
+    dropout: 0.0
+    bias: true
+
+    # Layer normalization
+    normalization:
+      norm_type: layer_norm
+      norm_eps: 0.00001  # 1e-5
+      bias: true
+
+    # Multi-head attention
+    attention:
+      num_heads: 12
+      dropout: 0.0
+      bias: true
+      max_seq_length: 1024
+      is_causal: true
+      use_flash_attention: true  # GPT-2 can use Flash Attention
+
+    # Feed-forward network
+    ffn:
+      ffn_type: mlp
+      intermediate_dim: 3072  # 4 * hidden_dim
+      activation: gelu
+      dropout: 0.0
+      bias: true
+
+  # Output head
+  output_head:
+    tie_word_embeddings: true  # GPT-2 ties input and output embeddings
+    lm_head_bias: false  # No bias in output projection when tied
+
+# Training configuration
+training:
+  # Batch settings
+  batch_size: 12
+  gradient_accumulation_steps: 5  # Effective batch size = 60
+  max_iters: 600000
+  log_interval: 10
+  seed: 1337
+
+  # Learning rate schedule
+  lr_warmup_iters: 2000
+  lr_decay_iters: 600000
+  min_lr: 0.00006  # 6e-5  # 10% of max LR
+
+  # Evaluation
+  eval_interval: 1000
+  eval_iters: 200
+
+# Optimizer configuration
+optimizer:
+  optimizer_type: adamw
+  learning_rate: 0.0006  # Max learning rate (6e-4)
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eps: 0.00000001  # 1e-8
+  parameter_grouping: dimension
+
+# Learning rate schedule
+lr_schedule:
+  schedule_type: cosine
+  warmup_iters: 2000
+  lr_decay_iters: 600000
+  min_lr: 0.00006  # 6e-5
+
+# Checkpointing
+checkpointing:
+  save_dir: ./checkpoints/gpt2
+  save_interval: 10000
+  save_best: false  # Only save at intervals, not based on validation
+  keep_last_n: 3
+
+# Data configuration
+data:
+  dataset: openwebtext
+  data_dir: ./data/openwebtext
+  train_split: 0.9
+  val_split: 0.1
+  num_workers: 4
+  pin_memory: true  # Pin memory for faster GPU transfer
+
+# System configuration
+system:
+  device: cuda
+  torch_dtype: bfloat16
+  compile: true
+  compile_mode: default  # Options: default, reduce-overhead, max-autotune
+  distributed: false
+  backend: nccl  # DDP backend
+  find_unused_parameters: false
+
+# Logging configuration
+logging:
+  enabled: false  # Use W&B logging
+  project: minllm-gpt2
+  run_name: gpt2-124m
+  log_model: false  # Don't log model checkpoints to W&B
