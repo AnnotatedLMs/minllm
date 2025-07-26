@@ -11,46 +11,38 @@ import torch
 import torch.testing
 
 # Project
-# Local
-from pretraining.common.patterns.llm import deepseek
-from pretraining.common.patterns.llm import factory
-from pretraining.common.patterns.llm import gpt2
-from pretraining.common.patterns.llm import llama
-from pretraining.configs import registry
-from pretraining.configs.parsers import model_parser
-from pretraining.configs.parsers import training_parser
+from pretraining.common.patterns.architectures import deepseek3
+from pretraining.common.patterns.architectures import gpt2
+from pretraining.common.patterns.architectures import llama3
+from pretraining.configs import loader
+from pretraining.configs.model.architectures import deepseek
+from pretraining.configs.model.architectures import gpt
+from pretraining.configs.model.architectures import llama
 
 
 class TestLLMForwardMethods:
     """Test forward methods across different LLM architectures."""
 
     @pytest.fixture
-    def config_registry(self) -> registry.ConfigRegistry:
-        """Create a config registry."""
-        model_parser_instance = model_parser.ModelConfigParser()
-        training_parser_instance = training_parser.TrainingConfigParser()
-        return registry.ConfigRegistry(model_parser_instance, training_parser_instance)
-
-    @pytest.fixture
-    def gpt2_model(self, config_registry: registry.ConfigRegistry) -> gpt2.GPT2LLM:
+    def gpt2_model(self) -> gpt2.GPT2LLM:
         """Create a small GPT-2 model for testing."""
         config_path = "pretraining/configs/examples/debug/gpt2_debug.yaml"
-        config = config_registry.parse_config(config_path)
-        return factory.create_llm(config.llm)
+        config = loader.load_training_config(config_path, gpt.GPT2Config)
+        return gpt2.GPT2LLM(config.llm)
 
     @pytest.fixture
-    def llama_model(self, config_registry: registry.ConfigRegistry) -> llama.LlamaLLM:
+    def llama_model(self) -> llama3.LlamaLLM:
         """Create a small Llama model for testing."""
         config_path = "pretraining/configs/examples/debug/llama31_debug.yaml"
-        config = config_registry.parse_config(config_path)
-        return factory.create_llm(config.llm)
+        config = loader.load_training_config(config_path, llama.Llama3Config)
+        return llama3.LlamaLLM(config.llm)
 
     @pytest.fixture
-    def deepseek_model(self, config_registry: registry.ConfigRegistry) -> deepseek.DeepSeekLLM:
+    def deepseek_model(self) -> deepseek3.DeepSeekLLM:
         """Create a small DeepSeek model for testing."""
         config_path = "pretraining/configs/examples/debug/deepseek3_debug.yaml"
-        config = config_registry.parse_config(config_path)
-        return factory.create_llm(config.llm)
+        config = loader.load_training_config(config_path, deepseek.DeepSeek3Config)
+        return deepseek3.DeepSeekLLM(config.llm)
 
     def test_training_forward_gpt2(self, gpt2_model: gpt2.GPT2LLM) -> None:
         """Test GPT-2 training forward pass."""
@@ -97,7 +89,7 @@ class TestLLMForwardMethods:
         assert logits.shape == (batch_size, seq_len, vocab_size)
         assert not logits.requires_grad  # Due to @torch.no_grad()
 
-    def test_training_forward_llama(self, llama_model: llama.LlamaLLM) -> None:
+    def test_training_forward_llama(self, llama_model: llama3.LlamaLLM) -> None:
         """Test Llama training forward pass."""
         batch_size, seq_len = 1, 16  # Smaller for memory
         vocab_size = llama_model.vocab_size
@@ -112,7 +104,7 @@ class TestLLMForwardMethods:
         assert loss.shape == ()
         assert loss.item() > 0
 
-    def test_inference_forward_with_kv_cache(self, llama_model: llama.LlamaLLM) -> None:
+    def test_inference_forward_with_kv_cache(self, llama_model: llama3.LlamaLLM) -> None:
         """Test Llama inference with KV cache."""
         batch_size = 1
         vocab_size = llama_model.vocab_size
@@ -138,7 +130,7 @@ class TestLLMForwardMethods:
         # Clean up
         llama_model.clear_kv_cache()
 
-    def test_training_forward_deepseek(self, deepseek_model: deepseek.DeepSeekLLM) -> None:
+    def test_training_forward_deepseek(self, deepseek_model: deepseek3.DeepSeekLLM) -> None:
         """Test DeepSeek training forward with MoE."""
         batch_size, seq_len = 1, 16
         vocab_size = deepseek_model.vocab_size
@@ -183,7 +175,7 @@ class TestLLMForwardMethods:
         assert output.shape == (batch_size, prompt_len + max_new_tokens)
         assert torch.all(output[:, :prompt_len] == prompt)  # Prompt preserved
 
-    def test_generate_llama_with_cache(self, llama_model: llama.LlamaLLM) -> None:
+    def test_generate_llama_with_cache(self, llama_model: llama3.LlamaLLM) -> None:
         """Test Llama generation with static KV cache."""
         batch_size = 1
         prompt_len = 5
@@ -233,5 +225,3 @@ class TestLLMForwardMethods:
 
         # Output should still have correct shape
         assert logits.shape == (batch_size, seq_len, vocab_size)
-
-        # TODO: Add more specific tests for attention mask effects

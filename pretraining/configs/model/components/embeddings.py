@@ -1,0 +1,30 @@
+# Third Party
+import pydantic
+
+# Project
+from pretraining.configs import base
+
+
+class TokenEmbeddingConfig(base.BaseConfig):
+    """Configuration for token embedding layers."""
+
+    vocab_size: int = pydantic.Field(gt=0, description="Vocabulary size")
+    embedding_dim: int = pydantic.Field(gt=0, description="Embedding dimension")
+    embedding_dropout: float = pydantic.Field(ge=0, lt=1, description="Dropout rate for embeddings")
+
+    # Embedding initialization
+    init_std: float = pydantic.Field(
+        gt=0, description="Standard deviation for normal initialization"
+    )
+
+
+class LearnedPositionEmbeddingConfig(base.BaseConfig):
+    """Configuration for learned position embeddings (GPT-2 style)."""
+
+    max_position_embeddings: int = pydantic.Field(default=1024, gt=0)
+    embedding_dim: int = pydantic.Field(default=768, gt=0)  # Must match model hidden dim
+
+    # Position embedding initialization
+    init_std: float = pydantic.Field(
+        default=0.02, gt=0, description="Standard deviation for normal initialization"
+    )

@@ -1,12 +1,6 @@
 # Llama 3.1 Debug Configuration (Tiny model for testing)
 
 model:
-  architecture: llama3.1
-
-  # Weight initialization
-  weight_init:
-    strategy: pytorch_default
-
   # Token embeddings
   token_embedding:
     vocab_size: 1000  # Tiny vocab
@@ -15,7 +9,7 @@ model:
     init_std: 0.02
 
   # Transformer backbone
-  transformer_backbone:
+  transformer:
     vocab_size: 1000
     hidden_dim: 64
     n_layers: 2  # Just 2 layers
@@ -25,19 +19,17 @@ model:
 
     # RMSNorm normalization
     normalization:
-      norm_type: rmsnorm
       norm_eps: 0.00001  # 1e-5
-      bias: false
 
     # Grouped Query Attention (GQA)
     attention:
-      attention_type: grouped_query
       num_heads: 4
       num_kv_heads: 2  # GQA with 2:1 ratio
       dropout: 0.0
       bias: false
       max_seq_length: 128
       is_causal: true
+      use_flash_attention: false
 
     # RoPE position encoding
     rope:
@@ -50,7 +42,6 @@ model:
 
     # SwiGLU FFN
     ffn:
-      ffn_type: swiglu
       intermediate_dim: 172  # Following Llama's calculation
       activation: silu
       dropout: 0.0
@@ -65,68 +56,67 @@ model:
 
 # Training configuration
 training:
-  # Batch settings
-  batch_size: 2
-  gradient_accumulation_steps: 1
+  # Top-level training loop fields
   max_iters: 10
   log_interval: 1
   seed: 1337
 
+  # Data configuration
+  data:
+    dataset: debug
+    data_dir: ./data/debug
+    num_workers: 1
+    pin_memory: false
+
+  # Batch configuration
+  batch:
+    batch_size: 2
+    sequence_length: 128
+    gradient_accumulation_steps: 1
+
+  # Optimizer configuration
+  optimizer:
+    optimizer_type: adamw
+    learning_rate: 0.0003
+    weight_decay: 0.1
+    beta1: 0.9
+    beta2: 0.95
+    grad_clip: 1.0
+    eps: 0.00000001
+    parameter_grouping: dimension
+
   # Learning rate schedule
-  lr_warmup_iters: 2
-  lr_decay_iters: 10
-  min_lr: 0.00001
+  lr_schedule:
+    schedule_type: cosine
+    warmup_iters: 2
+    lr_decay_iters: 10
+    min_lr: 0.00001
 
-  # Evaluation
-  eval_interval: 5
-  eval_iters: 2
+  # Evaluation configuration
+  evaluation:
+    eval_interval: 5
+    eval_iters: 2
 
-# Optimizer configuration
-optimizer:
-  optimizer_type: adamw
-  learning_rate: 0.0003
-  weight_decay: 0.1
-  beta1: 0.9
-  beta2: 0.95
-  grad_clip: 1.0
-  eps: 0.00000001
-  parameter_grouping: dimension
+  # Checkpointing configuration
+  checkpoint:
+    save_dir: ./checkpoints/debug/llama31
+    save_interval: 10
+    save_best: false
+    keep_last_n: 1
 
-# Learning rate schedule
-lr_schedule:
-  schedule_type: cosine
-  warmup_iters: 2
-  lr_decay_iters: 10
-  min_lr: 0.00001
+  # Torch compilation configuration
+  torch_compilation:
+    compile: false
 
-# Checkpointing
-checkpointing:
-  save_dir: ./checkpoints/debug/llama31
-  save_interval: 10
-  save_best: false
-  keep_last_n: 1
+  # Execution configuration
+  execution:
+    strategy: single
+    single:
+      device: cpu  # Use CPU for debug
 
-# Data configuration
-data:
-  dataset: debug
-  data_dir: ./data/debug
-  train_split: 0.9
-  val_split: 0.1
-  num_workers: 1
-  pin_memory: false
-
-# System configuration
-system:
-  device: cpu  # Use CPU for debug
-  torch_dtype: float32
-  compile: false
-  distributed: false
-  backend: nccl
-  find_unused_parameters: false
-
-# Logging configuration
-logging:
-  enabled: false
-  project: debug
-  run_name: debug-llama31
-  log_model: false
+  # Weights & Biases logging
+  wandb_logging:
+    enabled: false
+    project: debug
+    run_name: debug-llama31
+    log_model: false

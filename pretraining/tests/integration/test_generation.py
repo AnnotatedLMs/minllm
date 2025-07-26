@@ -6,10 +6,11 @@ import pytest
 import torch
 
 # Project
-from pretraining.common.patterns.llm import factory
-from pretraining.configs import registry
-from pretraining.configs.parsers import model_parser
-from pretraining.configs.parsers import training_parser
+from pretraining.common.patterns.architectures import gpt2
+from pretraining.common.patterns.architectures import llama3
+from pretraining.configs import loader
+from pretraining.configs.model.architectures import gpt
+from pretraining.configs.model.architectures import llama
 
 
 class TestGeneration:
@@ -23,33 +24,24 @@ class TestGeneration:
     """
 
     @pytest.fixture
-    def config_registry(self) -> registry.ConfigRegistry:
-        """Create a config registry for testing."""
-        model_parser_instance = model_parser.ModelConfigParser()
-        training_parser_instance = training_parser.TrainingConfigParser()
-        return registry.ConfigRegistry(model_parser_instance, training_parser_instance)
-
-    @pytest.fixture
     def debug_configs_dir(self) -> pathlib.Path:
         """Path to debug configs."""
         return pathlib.Path(__file__).parent.parent.parent / "configs" / "examples" / "debug"
 
-    def test_gpt2_generation(
-        self, config_registry: registry.ConfigRegistry, debug_configs_dir: pathlib.Path
-    ) -> None:
+    def test_gpt2_generation(self, debug_configs_dir: pathlib.Path) -> None:
         """Test GPT2 text generation."""
         # Load config
         config_path = debug_configs_dir / "gpt2_debug.yaml"
-        config = config_registry.parse_config(config_path)
+        config = loader.load_training_config(config_path, gpt.GPT2Config)
 
         # Create model
-        model = factory.create_llm(config.llm)
+        model = gpt2.GPT2LLM(config.llm)
         model.eval()
 
         # Create input tokens (batch_size=2, seq_len=5)
         batch_size = 2
         seq_len = 5
-        vocab_size = config.llm.token_embedding_config.vocab_size
+        vocab_size = config.llm.token_embedding.vocab_size
         input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
 
         # Generate tokens
@@ -77,22 +69,20 @@ class TestGeneration:
         assert output_ids_high_temp.shape == (batch_size, seq_len + 5)
         assert output_ids_low_temp.shape == (batch_size, seq_len + 5)
 
-    def test_llama_generation(
-        self, config_registry: registry.ConfigRegistry, debug_configs_dir: pathlib.Path
-    ) -> None:
+    def test_llama_generation(self, debug_configs_dir: pathlib.Path) -> None:
         """Test Llama text generation."""
         # Load config
         config_path = debug_configs_dir / "llama31_debug.yaml"
-        config = config_registry.parse_config(config_path)
+        config = loader.load_training_config(config_path, llama.Llama3Config)
 
         # Create model
-        model = factory.create_llm(config.llm)
+        model = llama3.LlamaLLM(config.llm)
         model.eval()
 
         # Create input tokens
         batch_size = 1
         seq_len = 8
-        vocab_size = config.llm.token_embedding_config.vocab_size
+        vocab_size = config.llm.token_embedding.vocab_size
         input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
 
         # Generate tokens
@@ -109,16 +99,14 @@ class TestGeneration:
         assert torch.all(output_ids >= 0)
         assert torch.all(output_ids < vocab_size)
 
-    def test_generation_reproducibility(
-        self, config_registry: registry.ConfigRegistry, debug_configs_dir: pathlib.Path
-    ) -> None:
+    def test_generation_reproducibility(self, debug_configs_dir: pathlib.Path) -> None:
         """Test that generation is reproducible with same seed."""
         # Load config
         config_path = debug_configs_dir / "gpt2_debug.yaml"
-        config = config_registry.parse_config(config_path)
+        config = loader.load_training_config(config_path, gpt.GPT2Config)
 
         # Create model
-        model = factory.create_llm(config.llm)
+        model = gpt2.GPT2LLM(config.llm)
         model.eval()
 
         # Create input

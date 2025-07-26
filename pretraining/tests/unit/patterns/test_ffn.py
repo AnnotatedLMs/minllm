@@ -11,17 +11,17 @@ import torch.nn as nn
 import torch.testing
 
 # Project
-# Local
-from pretraining.common.patterns import ffn
+from pretraining.common.patterns.ffn import gated
+from pretraining.common.patterns.ffn import mlp
 
 
 class TestMLP:
     """Test standard MLP feedforward network."""
 
     @pytest.fixture
-    def mlp_default(self) -> ffn.MLP:
+    def mlp_default(self) -> mlp.MLP:
         """Create MLP with default 4x expansion."""
-        return ffn.MLP(
+        return mlp.MLP(
             hidden_dim=128,
             intermediate_dim=None,  # Should default to 4x
             dropout=0.1,
@@ -30,9 +30,9 @@ class TestMLP:
         )
 
     @pytest.fixture
-    def mlp_custom(self) -> ffn.MLP:
+    def mlp_custom(self) -> mlp.MLP:
         """Create MLP with custom intermediate dimension."""
-        return ffn.MLP(
+        return mlp.MLP(
             hidden_dim=128,
             intermediate_dim=256,
             dropout=0.0,
@@ -40,7 +40,7 @@ class TestMLP:
             bias=False,
         )
 
-    def test_mlp_initialization_default(self, mlp_default: ffn.MLP) -> None:
+    def test_mlp_initialization_default(self, mlp_default: mlp.MLP) -> None:
         """Test MLP initializes with correct default dimensions."""
         assert mlp_default.hidden_dim == 128
         assert mlp_default.intermediate_dim == 512  # 4 * 128
@@ -62,7 +62,7 @@ class TestMLP:
         assert hasattr(mlp_default, "dropout_layer")
         assert mlp_default.dropout_layer.p == 0.1
 
-    def test_mlp_initialization_custom(self, mlp_custom: ffn.MLP) -> None:
+    def test_mlp_initialization_custom(self, mlp_custom: mlp.MLP) -> None:
         """Test MLP with custom configuration."""
         assert mlp_custom.intermediate_dim == 256
 
@@ -77,7 +77,7 @@ class TestMLP:
         assert mlp_custom.dropout == 0.0  # Stored as attribute
         # No dropout layer created when dropout=0.0
 
-    def test_mlp_forward(self, mlp_default: ffn.MLP) -> None:
+    def test_mlp_forward(self, mlp_default: mlp.MLP) -> None:
         """Test MLP forward pass."""
         batch_size, seq_len = 2, 10
         x = torch.randn(batch_size, seq_len, 128)
@@ -95,17 +95,17 @@ class TestMLP:
         activations = ["relu", "gelu", "silu"]
 
         for act in activations:
-            mlp = ffn.MLP(
+            mlp_instance = mlp.MLP(
                 hidden_dim=64,
                 activation=act,
                 dropout=0.0,
             )
 
             x = torch.randn(1, 5, 64)
-            output = mlp(x)
+            output = mlp_instance(x)
             assert output.shape == x.shape
 
-    def test_mlp_dropout_training_vs_eval(self, mlp_default: ffn.MLP) -> None:
+    def test_mlp_dropout_training_vs_eval(self, mlp_default: mlp.MLP) -> None:
         """Test dropout behavior in training vs eval mode."""
         x = torch.randn(1, 10, 128)
 
@@ -126,9 +126,9 @@ class TestMultiplicativeGatedFFN:
     """Test SwiGLU-style gated feedforward network."""
 
     @pytest.fixture
-    def swiglu(self) -> ffn.MultiplicativeGatedFFN:
+    def swiglu(self) -> gated.MultiplicativeGatedFFN:
         """Create SwiGLU FFN."""
-        return ffn.MultiplicativeGatedFFN(
+        return gated.MultiplicativeGatedFFN(
             hidden_dim=128,
             dropout=0.0,
             activation="silu",
@@ -137,7 +137,7 @@ class TestMultiplicativeGatedFFN:
             multiple_of=64,
         )
 
-    def test_swiglu_initialization(self, swiglu: ffn.MultiplicativeGatedFFN) -> None:
+    def test_swiglu_initialization(self, swiglu: gated.MultiplicativeGatedFFN) -> None:
         """Test SwiGLU initializes correctly."""
         assert swiglu.hidden_dim == 128
 
@@ -160,7 +160,7 @@ class TestMultiplicativeGatedFFN:
         assert swiglu.up_proj.bias is None
         assert swiglu.down_proj.bias is None
 
-    def test_swiglu_forward(self, swiglu: ffn.MultiplicativeGatedFFN) -> None:
+    def test_swiglu_forward(self, swiglu: gated.MultiplicativeGatedFFN) -> None:
         """Test SwiGLU forward pass."""
         batch_size, seq_len = 2, 8
         x = torch.randn(batch_size, seq_len, 128)
@@ -179,14 +179,14 @@ class TestMultiplicativeGatedFFN:
         ]
 
         for hidden, mult, multiple, expected in test_cases:
-            swiglu = ffn.MultiplicativeGatedFFN(
+            swiglu = gated.MultiplicativeGatedFFN(
                 hidden_dim=hidden,
                 ffn_dim_multiplier=mult,
                 multiple_of=multiple,
             )
             assert swiglu.intermediate_dim == expected
 
-    def test_swiglu_gating_mechanism(self, swiglu: ffn.MultiplicativeGatedFFN) -> None:
+    def test_swiglu_gating_mechanism(self, swiglu: gated.MultiplicativeGatedFFN) -> None:
         """Test the gating mechanism works correctly."""
         x = torch.randn(1, 1, 128)
 
@@ -210,7 +210,7 @@ class TestMultiplicativeGatedFFN:
         activations = ["silu", "gelu", "relu"]
 
         for act in activations:
-            swiglu = ffn.MultiplicativeGatedFFN(
+            swiglu = gated.MultiplicativeGatedFFN(
                 hidden_dim=64,
                 activation=act,
                 dropout=0.0,
@@ -229,21 +229,21 @@ class TestFFNComparison:
         hidden_dim = 256
 
         # Standard MLP with 4x expansion
-        mlp = ffn.MLP(
+        mlp_model = mlp.MLP(
             hidden_dim=hidden_dim,
             intermediate_dim=None,  # 4x = 1024
             bias=False,
         )
 
         # SwiGLU with equivalent capacity
-        swiglu = ffn.MultiplicativeGatedFFN(
+        swiglu = gated.MultiplicativeGatedFFN(
             hidden_dim=hidden_dim,
             ffn_dim_multiplier=2.67,  # Roughly equivalent params
             multiple_of=64,
             bias=False,
         )
 
-        mlp_params = sum(p.numel() for p in mlp.parameters())
+        mlp_params = sum(p.numel() for p in mlp_model.parameters())
         swiglu_params = sum(p.numel() for p in swiglu.parameters())
 
         # MLP: 256->1024->256 = 256*1024 + 1024*256 = 524,288
@@ -259,10 +259,10 @@ class TestFFNComparison:
         """Test that both FFN types produce reasonable output magnitudes."""
         x = torch.randn(1, 10, 128)
 
-        mlp = ffn.MLP(hidden_dim=128, dropout=0.0)
-        swiglu = ffn.MultiplicativeGatedFFN(hidden_dim=128, dropout=0.0)
+        mlp_model = mlp.MLP(hidden_dim=128, dropout=0.0)
+        swiglu = gated.MultiplicativeGatedFFN(hidden_dim=128, dropout=0.0)
 
-        mlp_out = mlp(x)
+        mlp_out = mlp_model(x)
         swiglu_out = swiglu(x)
 
         # Both should maintain roughly similar magnitude to input

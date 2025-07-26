@@ -10,32 +10,33 @@ import torch
 import torch.testing
 
 # Project
-# Local
-from pretraining.common.patterns.components import position
-from pretraining.configs.transformer import position_configs
+from pretraining.common.patterns.position import learned
+from pretraining.common.patterns.position import rope
+from pretraining.common.patterns.position import rope_partial
+from pretraining.configs.model.components import position
 
 
-class TestPrecomputedRoPE:
-    """Test PrecomputedRoPE implementation."""
+class TestRoPE:
+    """Test RoPE implementation."""
 
     @pytest.fixture
-    def rope_config(self) -> position_configs.RoPEConfig:
+    def rope_config(self) -> position.RoPEConfig:
         """Create a basic RoPE config."""
-        return position_configs.RoPEConfig(
+        return position.RoPEConfig(
             theta=10000.0,
             scaling=None,
         )
 
     @pytest.fixture
-    def rope_module(self, rope_config: position_configs.RoPEConfig) -> position.PrecomputedRoPE:
-        """Create a PrecomputedRoPE module."""
-        return position.PrecomputedRoPE(
+    def rope_module(self, rope_config: position.RoPEConfig) -> rope.RoPE:
+        """Create a RoPE module."""
+        return rope.RoPE(
             dim=64,  # head_dim
             config=rope_config,
             max_seq_len=128,
         )
 
-    def test_rope_initialization(self, rope_module: position.PrecomputedRoPE) -> None:
+    def test_rope_initialization(self, rope_module: rope.RoPE) -> None:
         """Test RoPE initializes correctly."""
         assert rope_module.dim == 64
         assert rope_module.max_seq_len == 128
@@ -47,7 +48,7 @@ class TestPrecomputedRoPE:
         assert hasattr(rope_module, "inv_freq")
         assert isinstance(rope_module.inv_freq, torch.Tensor)
 
-    def test_rope_forward_basic(self, rope_module: position.PrecomputedRoPE) -> None:
+    def test_rope_forward_basic(self, rope_module: rope.RoPE) -> None:
         """Test basic forward pass."""
         batch_size, seq_len, num_heads, head_dim = 2, 10, 8, 64
         x = torch.randn(batch_size, seq_len, num_heads, head_dim)
@@ -61,7 +62,7 @@ class TestPrecomputedRoPE:
         # Check output is different from input (rotation applied)
         assert not torch.allclose(output, x)
 
-    def test_rope_position_offset(self, rope_module: position.PrecomputedRoPE) -> None:
+    def test_rope_position_offset(self, rope_module: rope.RoPE) -> None:
         """Test position offset functionality for KV caching."""
         batch_size, num_heads, head_dim = 2, 8, 64
 
@@ -81,7 +82,7 @@ class TestPrecomputedRoPE:
         torch.testing.assert_close(out1, out_full[:, :1])
         torch.testing.assert_close(out2, out_full[:, 1:2])
 
-    def test_rope_max_position_exceeded(self, rope_module: position.PrecomputedRoPE) -> None:
+    def test_rope_max_position_exceeded(self, rope_module: rope.RoPE) -> None:
         """Test error when position exceeds precomputed max."""
         x = torch.randn(2, 10, 8, 64)
 
@@ -89,7 +90,7 @@ class TestPrecomputedRoPE:
         with pytest.raises(ValueError, match="exceeds precomputed max"):
             rope_module(x, position_offset=120)  # 120 + 10 > 128
 
-    def test_rope_deterministic(self, rope_module: position.PrecomputedRoPE) -> None:
+    def test_rope_deterministic(self, rope_module: rope.RoPE) -> None:
         """Test RoPE is deterministic."""
         x = torch.randn(2, 10, 8, 64)
 
@@ -103,22 +104,22 @@ class TestPartialRoPE:
     """Test PartialRoPE implementation for DeepSeek."""
 
     @pytest.fixture
-    def rope_config(self) -> position_configs.RoPEConfig:
+    def rope_config(self) -> position.RoPEConfig:
         """Create a basic RoPE config."""
-        return position_configs.RoPEConfig(
+        return position.RoPEConfig(
             theta=10000.0,
             scaling=None,
         )
 
     @pytest.fixture
-    def partial_rope(self, rope_config: position_configs.RoPEConfig) -> position.PartialRoPE:
+    def partial_rope(self, rope_config: position.RoPEConfig) -> rope_partial.PartialRoPE:
         """Create a PartialRoPE module."""
-        return position.PartialRoPE(
+        return rope_partial.PartialRoPE(
             dim=64,  # rope_dim, not full head_dim
             config=rope_config,
         )
 
-    def test_partial_rope_forward(self, partial_rope: position.PartialRoPE) -> None:
+    def test_partial_rope_forward(self, partial_rope: rope_partial.PartialRoPE) -> None:
         """Test PartialRoPE forward pass."""
         batch_size, num_heads, seq_len, rope_dim = 2, 8, 10, 64
         x = torch.randn(batch_size, num_heads, seq_len, rope_dim)
@@ -131,7 +132,7 @@ class TestPartialRoPE:
         # Check rotation applied
         assert not torch.allclose(output, x)
 
-    def test_partial_rope_no_position_offset(self, partial_rope: position.PartialRoPE) -> None:
+    def test_partial_rope_no_position_offset(self, partial_rope: rope_partial.PartialRoPE) -> None:
         """Test PartialRoPE doesn't accept position_offset."""
         x = torch.randn(2, 8, 10, 64)
 
@@ -147,16 +148,16 @@ class TestLearnedPositionEmbedding:
     """Test learned position embeddings."""
 
     @pytest.fixture
-    def learned_pos_emb(self) -> position.LearnedPositionEmbedding:
+    def learned_pos_emb(self) -> learned.LearnedPositionEmbedding:
         """Create learned position embedding module."""
-        return position.LearnedPositionEmbedding(
+        return learned.LearnedPositionEmbedding(
             max_position_embeddings=1024,
             embedding_dim=768,
             init_std=0.02,
         )
 
     def test_learned_embedding_forward(
-        self, learned_pos_emb: position.LearnedPositionEmbedding
+        self, learned_pos_emb: learned.LearnedPositionEmbedding
     ) -> None:
         """Test learned embedding forward pass."""
         batch_size, seq_len = 2, 100
@@ -171,7 +172,7 @@ class TestLearnedPositionEmbedding:
         assert learned_pos_emb.wpe.weight.requires_grad
 
     def test_learned_embedding_out_of_range(
-        self, learned_pos_emb: position.LearnedPositionEmbedding
+        self, learned_pos_emb: learned.LearnedPositionEmbedding
     ) -> None:
         """Test error when position exceeds max."""
         position_ids = torch.tensor([[0, 500, 1024]])  # 1024 >= max_position_embeddings
@@ -185,19 +186,19 @@ class TestRoPEScaling:
 
     def test_rope_with_scaling(self) -> None:
         """Test RoPE with scaling configuration."""
-        scaling_config = position_configs.RoPEScalingConfig(
+        scaling_config = position.RoPEScalingConfig(
             scale_factor=8.0,
             low_freq_factor=1.0,
             high_freq_factor=4.0,
             original_context_len=8192,
         )
 
-        rope_config = position_configs.RoPEConfig(
+        rope_config = position.RoPEConfig(
             theta=500000.0,
             scaling=scaling_config,
         )
 
-        rope_module = position.PrecomputedRoPE(
+        rope_module = rope.RoPE(
             dim=128,
             config=rope_config,
             max_seq_len=65536,  # Extended context

@@ -1,22 +1,24 @@
 # Standard Library
-import dataclasses
 import typing
 
+# Third Party
+import pydantic
+
 # Project
-# Local
+from pretraining.configs import base
 from pretraining.configs.training import architecture_training_configs
 from pretraining.configs.training import batch_configs
 from pretraining.configs.training import checkpointer_configs
 from pretraining.configs.training import data_configs
 from pretraining.configs.training import evaluator_configs
+from pretraining.configs.training import execution_configs
 from pretraining.configs.training import lr_configs
 from pretraining.configs.training import optimizer_configs
 from pretraining.configs.training import system_configs
 from pretraining.configs.training import wandb_configs
 
 
-@dataclasses.dataclass
-class TrainingLoopConfig:
+class TrainingLoopConfig(base.BaseConfig):
     """
     Configuration for training loop parameters.
     """
@@ -32,21 +34,20 @@ class TrainingLoopConfig:
     lr_schedule: lr_configs.LearningRateScheduleConfig
 
     # 4. Training loop control (when to evaluate, checkpoint, and stop)
-    max_iters: int  # Total number of training iterations
+    max_iters: int = pydantic.Field(gt=0)  # Total number of training iterations
     evaluation: evaluator_configs.EvaluatorConfig
     checkpoint: checkpointer_configs.CheckpointerConfig
 
-    # 5. System configuration (hardware and distributed training)
-    device: system_configs.DeviceConfig
+    # 5. System configuration (hardware and execution)
     torch_compilation: system_configs.TorchCompilationConfig
-    distribution: system_configs.DistributedConfig
+    execution: execution_configs.ExecutionConfig
 
     # 6. Monitoring and logging
-    log_interval: int  # How often to log training metrics
+    log_interval: int = pydantic.Field(gt=0)  # How often to log training metrics
     wandb_logging: wandb_configs.WandbConfig
 
     # 7. Reproducibility
-    seed: int  # Random seed for reproducibility
+    seed: int = pydantic.Field(ge=0)  # Random seed for reproducibility
 
     # 8. Architecture-specific training settings (optional)
     moe_training: typing.Optional[architecture_training_configs.MoETrainingConfig] = (

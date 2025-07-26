@@ -1,11 +1,12 @@
-# Standard Library
-import dataclasses
+# Third Party
+import pydantic
+
+# Project
+from pretraining.configs import base
 
 
-@dataclasses.dataclass
-class EvaluatorConfig:
+class EvaluatorConfig(base.BaseConfig):
     """Consumed by: Evaluation loop"""
 
-    eval_interval: int
-    eval_iters: int
-    eval_only: bool
+    eval_interval: int = pydantic.Field(gt=0)
+    eval_iters: int = pydantic.Field(gt=0)

@@ -1,10 +1,11 @@
 # Standard Library
-import dataclasses
 import typing
 
+# Project
+from pretraining.configs import base
 
-@dataclasses.dataclass
-class WandbConfig:
+
+class WandbConfig(base.BaseConfig):
     """Configuration for Weights & Biases experiment tracking."""
 
     enabled: bool  # Whether to use W&B logging
