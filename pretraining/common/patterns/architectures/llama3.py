@@ -13,9 +13,10 @@ from pretraining.common.patterns.blocks import llama3 as llama3_blocks
 from pretraining.common.patterns.cache import kv_cache
 from pretraining.common.patterns.position import rope
 from pretraining.configs.model.architectures import llama
+from pretraining.configs.model.components import position
 
 
-class LlamaLLM(llm.BaseLLM):
+class Llama3(llm.BaseLLM):
     """
     Llama Language Model implementation.
 
@@ -34,82 +35,137 @@ class LlamaLLM(llm.BaseLLM):
     Effect: Improves training stability and slightly reduces parameters
     """
 
-    def __init__(self, config: llama.Llama3Config):
+    def __init__(
+        self,
+        # Core dimensions
+        vocab_size: int,
+        hidden_dim: int,
+        n_layers: int,
+        block_size: int,
+        # Token embedding params
+        embedding_dropout: float = 0.0,
+        # RoPE params
+        rope_theta: float = 10000.0,
+        rope_scaling: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        # Transformer params
+        num_heads: int = 32,
+        num_kv_heads: typing.Optional[int] = None,  # For GQA
+        dropout: float = 0.0,
+        norm_eps: float = 1e-5,
+        use_flash_attention: bool = False,
+        # FFN params
+        ffn_dim_multiplier: float = 1.3,
+        multiple_of: int = 256,
+        # Output head params
+        lm_head_bias: bool = False,
+    ):
+        """
+        Initialize Llama3 model.
+
+        Args:
+            vocab_size: Size of vocabulary
+            hidden_dim: Hidden dimension (d_model)
+            n_layers: Number of transformer layers
+            block_size: Maximum sequence length
+            embedding_dropout: Dropout for embeddings
+            rope_theta: Base frequency for RoPE
+            rope_scaling: Optional RoPE scaling config
+            num_heads: Number of attention heads
+            num_kv_heads: Number of key/value heads (for GQA)
+            dropout: Dropout rate throughout model
+            norm_eps: RMSNorm epsilon
+            use_flash_attention: Whether to use flash attention
+            ffn_dim_multiplier: Multiplier for FFN dimension
+            multiple_of: Round FFN dimension to multiple of this
+            lm_head_bias: Whether to use bias in lm_head (traditionally False)
+        """
         super().__init__()
-        self.config = config
 
-        # Validate this is a Llama config
-        # Llama doesn't have position_embedding field at all
-        assert config.transformer.rope is not None, "Llama requires RoPE config"
-
-        # Extract dimensions
-        self.vocab_size = config.token_embedding.vocab_size
-        self.hidden_dim = config.transformer.hidden_dim
-        self.n_layers = config.transformer.n_layers
-        self.block_size = config.transformer.block_size
+        # Store dimensions
+        self.vocab_size = vocab_size
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+        self.block_size = block_size
 
         # Token embeddings
         self.token_embeddings = nn.Embedding(
-            num_embeddings=config.token_embedding.vocab_size,
-            embedding_dim=config.token_embedding.embedding_dim,
+            num_embeddings=vocab_size,
+            embedding_dim=hidden_dim,
         )
 
-        # No position embeddings for Llama (uses RoPE instead)
+        # Dropout for embeddings
+        self.embed_dropout = nn.Dropout(embedding_dropout)
 
-        # Dropout for embeddings (if specified)
-        self.embed_dropout = nn.Dropout(config.token_embedding.embedding_dropout)
-
-        # RoPE module (shared across all layers)
-        rope_config = config.transformer.rope
+        # RoPE module
+        scaling_config = None
+        if rope_scaling:
+            scaling_config = position.RoPEScalingConfig(**rope_scaling)
+        rope_config = position.RoPEConfig(theta=rope_theta, scaling=scaling_config)
         self.rope = rope.RoPE(
-            dim=self.hidden_dim // config.transformer.attention.num_heads,  # head_dim
+            dim=hidden_dim // num_heads,  # head_dim
             config=rope_config,
         )
 
         # Transformer blocks
         self.blocks: nn.ModuleList[llama3_blocks.Llama3TransformerBlock] = nn.ModuleList(
-            [self._create_transformer_block(config) for _ in range(config.transformer.n_layers)]
+            [
+                llama3_blocks.Llama3TransformerBlock(
+                    hidden_dim=hidden_dim,
+                    num_heads=num_heads,
+                    num_kv_heads=num_kv_heads if num_kv_heads else num_heads,
+                    rope_module=self.rope,
+                    dropout=dropout,
+                    norm_eps=norm_eps,
+                    ffn_dim_multiplier=ffn_dim_multiplier,
+                    multiple_of=multiple_of,
+                    use_flash_attention=use_flash_attention,
+                )
+                for _ in range(n_layers)
+            ]
         )
 
         # Final RMSNorm
-        self.norm = nn.RMSNorm(
-            self.hidden_dim,
-            eps=config.transformer.normalization.norm_eps,
-        )
+        self.norm = nn.RMSNorm(hidden_dim, eps=norm_eps)
 
-        # Output projection (language modeling head)
-        # Llama does NOT use tied embeddings - has separate output projection
-        self.lm_head = nn.Linear(
-            self.hidden_dim, self.vocab_size, bias=config.output_head.lm_head_bias
-        )
+        # Output projection - separate (not tied)
+        self.lm_head = nn.Linear(hidden_dim, vocab_size, bias=lm_head_bias)
 
-        # Apply weight initialization from config
-        self._apply_weight_initialization(config)
+        # No weight initialization needed - Llama uses PyTorch defaults
 
-    def _create_transformer_block(
-        self, config: llama.Llama3Config
-    ) -> llama3_blocks.Llama3TransformerBlock:
-        """Create a Llama style transformer block."""
+    @classmethod
+    def from_config(cls, config: llama.Llama3Config) -> "Llama3":
+        """Create Llama3 from a config object."""
+        # Extract attention config
         attn_config = config.transformer.attention
-        ffn_config = config.transformer.ffn
-        norm_config = config.transformer.normalization
+        num_kv_heads = getattr(attn_config, "num_kv_heads", None)
 
-        # Extract GQA parameters
-        num_kv_heads = None
-        if hasattr(attn_config, "num_kv_heads"):
-            num_kv_heads = attn_config.num_kv_heads
+        # Extract RoPE scaling if present
+        rope_scaling = None
+        if config.transformer.rope.scaling:
+            rope_scaling = config.transformer.rope.scaling.model_dump()
 
-        # Llama uses Llama3TransformerBlock with SwiGLU and GQA
-        return llama3_blocks.Llama3TransformerBlock(
-            hidden_dim=self.hidden_dim,
+        return cls(
+            # Core dimensions
+            vocab_size=config.token_embedding.vocab_size,
+            hidden_dim=config.transformer.hidden_dim,
+            n_layers=config.transformer.n_layers,
+            block_size=config.transformer.block_size,
+            # Token embedding params
+            embedding_dropout=config.token_embedding.embedding_dropout,
+            # RoPE params
+            rope_theta=config.transformer.rope.theta,
+            rope_scaling=rope_scaling,
+            # Transformer params
             num_heads=attn_config.num_heads,
-            num_kv_heads=num_kv_heads if num_kv_heads else attn_config.num_heads,
-            rope_module=self.rope,
+            num_kv_heads=num_kv_heads,
             dropout=config.transformer.dropout,
-            norm_eps=norm_config.norm_eps,
-            ffn_dim_multiplier=ffn_config.ffn_dim_multiplier,
-            multiple_of=ffn_config.multiple_of,
+            norm_eps=config.transformer.normalization.norm_eps,
             use_flash_attention=attn_config.use_flash_attention,
+            # FFN params
+            ffn_dim_multiplier=config.transformer.ffn.ffn_dim_multiplier,
+            multiple_of=config.transformer.ffn.multiple_of,
+            # Output head params
+            lm_head_bias=config.output_head.lm_head_bias,
         )
 
     def _apply_transformer_blocks(

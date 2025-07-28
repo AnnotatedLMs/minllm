@@ -8,7 +8,9 @@ import torch
 
 # Project
 from pretraining.common.base import core
+from pretraining.configs.model import initialization
 from pretraining.configs.model.architectures import base as arch_base
+from pretraining.utils import weight_init
 
 
 class BaseLLM(core.BaseTorchModule, abc.ABC):
@@ -126,12 +128,13 @@ class BaseLLM(core.BaseTorchModule, abc.ABC):
         after all modules have been created.
 
         Args:
-            config: The LLM configuration containing weight_init
+            config: The LLM configuration containing optional weight_init
         """
-        # Project
-        from pretraining.utils import weight_init
+        if config.weight_init is None:
+            # Use PyTorch defaults - nothing to do
+            return
 
-        if config.weight_init.strategy == "gpt2":
+        if isinstance(config.weight_init, initialization.GPT2InitConfig):
             # Use TransformerWeightInitializer for GPT-2 style
             initializer = weight_init.TransformerWeightInitializer(
                 n_layer=self.n_layers,
@@ -139,12 +142,11 @@ class BaseLLM(core.BaseTorchModule, abc.ABC):
                 residual_pattern=config.weight_init.residual_pattern,
             )
             initializer.initialize(self)
-        elif config.weight_init.strategy == "pytorch_default":
-            # Use standard PyTorch initialization
-            # PyTorch defaults are already applied when modules are created
-            pass
         else:
-            raise ValueError(f"Unknown initialization strategy: {config.weight_init.strategy}")
+            raise ValueError(
+                f"Unknown weight initialization config type: {type(config.weight_init).__name__}. "
+                f"Expected GPT2InitConfig or None."
+            )
 
     @torch.no_grad()
     def generate(

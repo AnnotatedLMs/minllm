@@ -53,7 +53,7 @@ def main(trainer_config: core.TrainerConfig) -> None:
 
     # Create model
     log.info("Building GPT-2 model...")
-    model = gpt2.GPT2LLM(trainer_config.llm)
+    model = gpt2.GPT2(trainer_config.llm)
 
     # Move model to device
     model = model.to(device)

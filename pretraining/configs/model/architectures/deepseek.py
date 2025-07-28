@@ -23,6 +23,32 @@ class DeepSeek3Config(base.BaseLLMConfig):
         if self.transformer.rope is None:
             raise ValueError("DeepSeek architecture requires RoPE config")
 
+        # DeepSeek requires MoE config (no standard FFN)
+        if self.transformer.moe is None:
+            raise ValueError("DeepSeek architecture requires MoE config")
+        if self.transformer.ffn is not None:
+            raise ValueError("DeepSeek uses MoE instead of standard FFN")
+
+        # DeepSeek doesn't traditionally use tied embeddings
+        if self.output_head.tie_word_embeddings:
+            raise ValueError(
+                "DeepSeek traditionally uses separate output projection (tie_word_embeddings=False)"
+            )
+
+        # DeepSeek doesn't traditionally use bias in transformer layers
+        if self.transformer.bias:
+            raise ValueError(
+                "DeepSeek traditionally uses no bias in transformer layers (bias=False)"
+            )
+
+        # Ensure we're using RMSNorm
+        if not isinstance(self.transformer.normalization, normalization.RMSNormConfig):
+            raise ValueError("DeepSeek traditionally uses RMSNorm normalization")
+
+        # Ensure we're using MultiHeadLatentAttention (MLA)
+        if not isinstance(self.transformer.attention, attention.MultiHeadLatentAttentionConfig):
+            raise ValueError("DeepSeek requires MultiHeadLatentAttention (MLA) config")
+
         return self
 
     @classmethod

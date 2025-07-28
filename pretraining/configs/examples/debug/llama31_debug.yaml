@@ -51,7 +51,7 @@ model:
 
   # Output head
   output_head:
-    tie_word_embeddings: true
+    tie_word_embeddings: false
     lm_head_bias: false
 
 # Training configuration

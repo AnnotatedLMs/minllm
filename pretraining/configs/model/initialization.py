@@ -13,12 +13,6 @@ class BaseInitializationConfig(base.BaseConfig):
     pass
 
 
-class PyTorchDefaultInitConfig(BaseInitializationConfig):
-    """Use PyTorch's default initialization (Kaiming uniform)."""
-
-    pass
-
-
 class GPT2InitConfig(BaseInitializationConfig):
     """GPT-2 style initialization with specific standard deviations."""
 

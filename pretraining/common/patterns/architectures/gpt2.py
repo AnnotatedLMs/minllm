@@ -10,10 +10,11 @@ import torch.nn as nn
 from pretraining.common.base import llm
 from pretraining.common.patterns.blocks import gpt2 as gpt2_blocks
 from pretraining.common.patterns.position import learned
+from pretraining.configs.model import initialization
 from pretraining.configs.model.architectures import gpt
 
 
-class GPT2LLM(llm.BaseLLM):
+class GPT2(llm.BaseLLM):
     """
     GPT-2 Language Model implementation.
 
@@ -32,67 +33,120 @@ class GPT2LLM(llm.BaseLLM):
     Effect: Reduces parameters and improves sample efficiency
     """
 
-    def __init__(self, config: gpt.GPT2Config):
+    def __init__(
+        self,
+        # Core dimensions
+        vocab_size: int,
+        hidden_dim: int,
+        n_layers: int,
+        block_size: int,
+        # Token embedding params
+        embedding_dropout: float = 0.0,
+        # Position embedding params
+        max_position_embeddings: int = 1024,
+        position_init_std: float = 0.02,
+        # Transformer params
+        num_heads: int = 12,
+        dropout: float = 0.0,
+        norm_eps: float = 1e-5,
+        use_flash_attention: bool = False,
+        # Weight init params
+        weight_init_std: float = 0.02,
+        residual_pattern: str = "c_proj.weight",
+    ):
+        """
+        Initialize GPT-2 model.
+
+        Args:
+            vocab_size: Size of vocabulary
+            hidden_dim: Hidden dimension (d_model)
+            n_layers: Number of transformer layers
+            block_size: Maximum sequence length
+            embedding_dropout: Dropout for embeddings
+            max_position_embeddings: Maximum position embeddings
+            position_init_std: Std dev for position embedding init
+            num_heads: Number of attention heads
+            dropout: Dropout rate throughout model
+            norm_eps: Layer norm epsilon
+            use_flash_attention: Whether to use flash attention
+            weight_init_std: Standard deviation for weight init
+            residual_pattern: Pattern to identify residual connections
+        """
         super().__init__()
-        self.config = config
 
-        assert config.position_embedding is not None, "GPT-2 requires position embeddings"
-        assert config.transformer.rope is None, "GPT-2 should not have RoPE"
+        # Store dimensions
+        self.vocab_size = vocab_size
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+        self.block_size = block_size
 
-        # Extract dimensions
-        self.vocab_size = config.token_embedding.vocab_size
-        self.hidden_dim = config.transformer.hidden_dim
-        self.n_layers = config.transformer.n_layers
-        self.block_size = config.transformer.block_size
-
+        # Token embeddings
         self.token_embeddings = nn.Embedding(
-            num_embeddings=config.token_embedding.vocab_size,
-            embedding_dim=config.token_embedding.embedding_dim,
+            num_embeddings=vocab_size,
+            embedding_dim=hidden_dim,
         )
 
+        # Position embeddings
         self.position_embeddings = learned.LearnedPositionEmbedding(
-            max_position_embeddings=config.position_embedding.max_position_embeddings,
-            embedding_dim=config.position_embedding.embedding_dim,
-            init_std=config.position_embedding.init_std,
+            max_position_embeddings=max_position_embeddings,
+            embedding_dim=hidden_dim,
+            init_std=position_init_std,
         )
 
-        self.embed_dropout = nn.Dropout(config.token_embedding.embedding_dropout)
+        self.embed_dropout = nn.Dropout(embedding_dropout)
 
         # Transformer blocks
         self.blocks: nn.ModuleList[gpt2_blocks.GPT2TransformerBlock] = nn.ModuleList(
-            [self._create_transformer_block(config) for _ in range(config.transformer.n_layers)]
+            [
+                gpt2_blocks.GPT2TransformerBlock(
+                    hidden_dim=hidden_dim,
+                    num_heads=num_heads,
+                    dropout=dropout,
+                    max_seq_length=block_size,
+                    norm_eps=norm_eps,
+                    use_flash_attention=use_flash_attention,
+                )
+                for _ in range(n_layers)
+            ]
         )
 
-        self.ln_f = nn.LayerNorm(
-            self.hidden_dim,
-            eps=config.transformer.normalization.norm_eps,
-            elementwise_affine=True,
+        # Final layer norm
+        self.ln_f = nn.LayerNorm(hidden_dim, eps=norm_eps, elementwise_affine=True)
+
+        # Output projection - tied with token embeddings
+        self.lm_head = self.token_embeddings
+
+        # Apply GPT-2 weight initialization
+        weight_init_config = initialization.GPT2InitConfig(
+            std=weight_init_std,
+            residual_pattern=residual_pattern,
+            position_init_std=position_init_std,
         )
+        minimal_config = type("Config", (), {"weight_init": weight_init_config})()
+        self._apply_weight_initialization(minimal_config)
 
-        # Output projection (language modeling head)
-        if config.output_head.tie_word_embeddings:
-            # Tie weights with token embeddings
-            self.lm_head = self.token_embeddings
-        else:
-            self.lm_head = nn.Linear(
-                self.hidden_dim, self.vocab_size, bias=config.output_head.lm_head_bias
-            )
-
-        # Apply weight initialization from config
-        self._apply_weight_initialization(config)
-
-    def _create_transformer_block(self, config: gpt.GPT2Config) -> gpt2_blocks.GPT2TransformerBlock:
-        """Create a GPT-2 style transformer block."""
-        attn_config = config.transformer.attention
-        norm_config = config.transformer.normalization
-
-        return gpt2_blocks.GPT2TransformerBlock(
-            hidden_dim=self.hidden_dim,
-            num_heads=attn_config.num_heads,
+    @classmethod
+    def from_config(cls, config: gpt.GPT2Config) -> "GPT2":
+        """Create GPT2 from a config object."""
+        return cls(
+            # Core dimensions
+            vocab_size=config.token_embedding.vocab_size,
+            hidden_dim=config.transformer.hidden_dim,
+            n_layers=config.transformer.n_layers,
+            block_size=config.transformer.block_size,
+            # Token embedding params
+            embedding_dropout=config.token_embedding.embedding_dropout,
+            # Position embedding params
+            max_position_embeddings=config.position_embedding.max_position_embeddings,
+            position_init_std=config.position_embedding.init_std,
+            # Transformer params
+            num_heads=config.transformer.attention.num_heads,
             dropout=config.transformer.dropout,
-            max_seq_length=attn_config.max_seq_length,
-            norm_eps=norm_config.norm_eps,
-            use_flash_attention=attn_config.use_flash_attention,
+            norm_eps=config.transformer.normalization.norm_eps,
+            use_flash_attention=config.transformer.attention.use_flash_attention,
+            # Weight init params
+            weight_init_std=config.weight_init.std,
+            residual_pattern=config.weight_init.residual_pattern,
         )
 
     def _get_position_embeddings(

@@ -35,7 +35,7 @@ class TestGeneration:
         config = loader.load_training_config(config_path, gpt.GPT2Config)
 
         # Create model
-        model = gpt2.GPT2LLM(config.llm)
+        model = gpt2.GPT2.from_config(config.llm)
         model.eval()
 
         # Create input tokens (batch_size=2, seq_len=5)
@@ -76,7 +76,7 @@ class TestGeneration:
         config = loader.load_training_config(config_path, llama.Llama3Config)
 
         # Create model
-        model = llama3.LlamaLLM(config.llm)
+        model = llama3.Llama3.from_config(config.llm)
         model.eval()
 
         # Create input tokens
@@ -106,7 +106,7 @@ class TestGeneration:
         config = loader.load_training_config(config_path, gpt.GPT2Config)
 
         # Create model
-        model = gpt2.GPT2LLM(config.llm)
+        model = gpt2.GPT2.from_config(config.llm)
         model.eval()
 
         # Create input

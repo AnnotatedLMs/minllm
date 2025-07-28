@@ -6,17 +6,8 @@
 - citations
 
 ## PRETRAINING
-- type based dispatch integrations needed?
-
-- change architecutre dir to go to deepseek.py and then the class name would be DeepSeek3 instead of DeepSeekLLM
-
-- basellm config does not use position configs, not sure why
-
-- reorganize config modules to more better reflect the structure of the pretraining code?
-
-- config.training.max_grad_norm & self.config.training.mixed_precision not available
-
-- flash attention default uses gqa if enable_gqa = hasattr(self, "num_kv_heads") and self.num_kv_heads != self.num_heads, but maybe we should just pass the arg instead at the architecture level?
+- TRANSFORMER CONFIG: norm and attention set as base for conevneince but it might be misleading
+- TRAINING LOOP CONFIGS: config.training.max_grad_norm & self.config.training.mixed_precision not available
 
 - trainer scripts for each architecture
 

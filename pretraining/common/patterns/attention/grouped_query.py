@@ -295,7 +295,7 @@ class GroupedQueryAttention(base.Attention):
 
         if use_flash:
             attn_output = self._apply_flash_attention(
-                q_heads, k_repeated, v_repeated, attention_mask
+                q_heads, k_repeated, v_repeated, attention_mask, enable_gqa=True
             )
         else:
             attn_output = self._compute_manual_attention(

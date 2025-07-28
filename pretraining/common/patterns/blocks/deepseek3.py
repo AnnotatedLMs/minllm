@@ -6,7 +6,6 @@ from pretraining.common.patterns.attention import multi_latent
 from pretraining.common.patterns.blocks import prenorm
 from pretraining.common.patterns.moe import aux_loss_free
 from pretraining.common.patterns.position import rope_partial
-from pretraining.configs.model.components import attention
 
 
 class DeepSeek3TransformerBlock(prenorm.PrenormTransformerBlock):
@@ -71,32 +70,4 @@ class DeepSeek3TransformerBlock(prenorm.PrenormTransformerBlock):
             num_experts=num_experts,
             num_experts_per_token=num_experts_per_token,
             dropout=dropout,
-        )
-
-    @classmethod
-    def from_mla_config(
-        cls,
-        hidden_dim: int,
-        mla_config: attention.MultiHeadLatentAttentionConfig,
-        rope_module: rope_partial.PartialRoPE,
-        num_experts: int,
-        num_experts_per_token: int,
-        dropout: float = 0.0,
-        norm_eps: float = 1e-5,
-        use_flash_attention: bool = True,
-    ):
-        """Convenience constructor using MLA config object."""
-        return cls(
-            hidden_dim=hidden_dim,
-            num_heads=mla_config.num_heads,
-            head_dim=mla_config.head_dim,
-            kv_compression_dim=mla_config.kv_compression_dim,
-            query_compression_dim=mla_config.query_compression_dim,
-            rope_module=rope_module,
-            rope_dim=mla_config.rope_dim,
-            num_experts=num_experts,
-            num_experts_per_token=num_experts_per_token,
-            dropout=dropout,
-            norm_eps=norm_eps,
-            use_flash_attention=use_flash_attention,
         )

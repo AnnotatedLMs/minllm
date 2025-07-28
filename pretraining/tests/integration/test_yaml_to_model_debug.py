@@ -29,7 +29,7 @@ class TestYAMLToModelDebug:
     • Reads YAML configuration files from configs/examples/debug/
     • Parses configs using loader.load_training_config
     • Creates model instances directly from model classes
-    • Verifies correct model type instantiation (GPT2LLM, LlamaLLM, DeepSeekLLM)
+    • Verifies correct model type instantiation (GPT2, Llama3, DeepSeek3)
     • Runs forward pass with random input to ensure model is functional
     • Validates output tensor shapes match expected dimensions
     • Checks model-specific features:
@@ -52,10 +52,10 @@ class TestYAMLToModelDebug:
         config = loader.load_training_config(config_path, gpt.GPT2Config)
 
         # Create model
-        model = gpt2.GPT2LLM(config.llm)
+        model = gpt2.GPT2.from_config(config.llm)
 
         # Verify model type
-        assert isinstance(model, gpt2.GPT2LLM)
+        assert isinstance(model, gpt2.GPT2)
 
         # Test forward pass
         batch_size, seq_len = 2, 32
@@ -80,10 +80,10 @@ class TestYAMLToModelDebug:
         config = loader.load_training_config(config_path, llama.Llama3Config)
 
         # Create model
-        model = llama3.LlamaLLM(config.llm)
+        model = llama3.Llama3.from_config(config.llm)
 
         # Verify model type
-        assert isinstance(model, llama3.LlamaLLM)
+        assert isinstance(model, llama3.Llama3)
 
         # Test forward pass with smaller sequence for memory
         batch_size, seq_len = 1, 32
@@ -111,10 +111,10 @@ class TestYAMLToModelDebug:
         config = loader.load_training_config(config_path, deepseek.DeepSeek3Config)
 
         # Create model
-        model = deepseek3.DeepSeekLLM(config.llm)
+        model = deepseek3.DeepSeek3.from_config(config.llm)
 
         # Verify model type
-        assert isinstance(model, deepseek3.DeepSeekLLM)
+        assert isinstance(model, deepseek3.DeepSeek3)
 
         # Test forward pass with very small sequence
         batch_size, seq_len = 1, 16
@@ -135,14 +135,14 @@ class TestYAMLToModelDebug:
     def test_model_parameter_counts(self, debug_configs_dir: pathlib.Path) -> None:
         """Test that debug models have reasonable parameter counts."""
         for config_name, model_class, config_class in [
-            ("gpt2_debug.yaml", gpt2.GPT2LLM, gpt.GPT2Config),
-            ("llama31_debug.yaml", llama3.LlamaLLM, llama.Llama3Config),
-            ("deepseek3_debug.yaml", deepseek3.DeepSeekLLM, deepseek.DeepSeek3Config),
+            ("gpt2_debug.yaml", gpt2.GPT2, gpt.GPT2Config),
+            ("llama31_debug.yaml", llama3.Llama3, llama.Llama3Config),
+            ("deepseek3_debug.yaml", deepseek3.DeepSeek3, deepseek.DeepSeek3Config),
         ]:
             config_path = debug_configs_dir / config_name
             config = loader.load_training_config(config_path, config_class)
 
-            model = model_class(config.llm)
+            model = model_class.from_config(config.llm)
             param_count = sum(p.numel() for p in model.parameters())
 
             # Debug models should be tiny

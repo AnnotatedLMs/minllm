@@ -169,6 +169,7 @@ class Attention(attention.BaseAttention):
         k: jaxtyping.Float[torch.Tensor, "batch n_heads seq_k head_dim"],
         v: jaxtyping.Float[torch.Tensor, "batch n_heads seq_k head_dim"],
         attention_mask: typing.Optional[torch.Tensor] = None,
+        enable_gqa: bool = False,
     ) -> jaxtyping.Float[torch.Tensor, "batch n_heads seq_q head_dim"]:
         """
         Apply Flash Attention using PyTorch's scaled_dot_product_attention.
@@ -179,6 +180,13 @@ class Attention(attention.BaseAttention):
         of the CUDA kernels. Modern LLMs typically don't use dropout anyway due
         to model scale and computational efficiency requirements. All configs
         should set dropout=0.0 when using Flash Attention.
+
+        Args:
+            q: Query tensor
+            k: Key tensor
+            v: Value tensor
+            attention_mask: Optional attention mask
+            enable_gqa: Whether to enable grouped query attention optimization
         """
         if not self.use_flash_attention:
             raise RuntimeError("Flash Attention not enabled for this module")
@@ -187,9 +195,6 @@ class Attention(attention.BaseAttention):
 
         # Try to use Flash Attention with context manager
         with torch_attention.sdpa_kernel(backends=[torch_attention.SDPBackend.FLASH_ATTENTION]):
-            # For GroupedQueryAttention, enable GQA optimization
-            enable_gqa = hasattr(self, "num_kv_heads") and self.num_kv_heads != self.num_heads
-
             output = F.scaled_dot_product_attention(
                 q,
                 k,

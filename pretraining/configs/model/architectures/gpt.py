@@ -18,6 +18,9 @@ class GPT2Config(base.BaseLLMConfig):
     # Position embeddings (required for GPT-2)
     position_embedding: embeddings.LearnedPositionEmbeddingConfig
 
+    # Weight initialization (required for GPT-2)
+    weight_init: initialization.GPT2InitConfig
+
     @pydantic.model_validator(mode="after")
     def validate_config(self) -> "GPT2Config":
         """Validate GPT-2 specific configuration."""
@@ -28,9 +31,17 @@ class GPT2Config(base.BaseLLMConfig):
                 f"transformer hidden_dim ({self.transformer.hidden_dim})"
             )
 
-        # GPT-2 doesn't use RoPE
+        # GPT-2 doesn't traditionally use RoPE
         if self.transformer.rope is not None:
             raise ValueError("GPT-2 architecture should not have RoPE config")
+
+        # GPT-2 traditionally uses tied embeddings
+        if not self.output_head.tie_word_embeddings:
+            raise ValueError("GPT-2 requires tied embeddings (tie_word_embeddings=True)")
+
+        # GPT-2 doesn't traditionally use lm_head bias (because of tied embeddings)
+        if self.output_head.lm_head_bias:
+            raise ValueError("GPT-2 cannot use lm_head_bias with tied embeddings")
 
         return self
 

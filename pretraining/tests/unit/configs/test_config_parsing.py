@@ -14,7 +14,9 @@ from pretraining.configs.model.architectures import deepseek
 from pretraining.configs.model.architectures import gpt
 from pretraining.configs.model.architectures import llama
 from pretraining.configs.model.components import attention
+from pretraining.configs.model.components import embeddings
 from pretraining.configs.model.components import feedforward
+from pretraining.configs.model.components import heads
 from pretraining.configs.model.components import normalization
 
 
@@ -163,9 +165,6 @@ class TestWeightInitConfigs:
 
     def test_weight_init_validation(self):
         """Test weight init config validation."""
-        # PyTorch default config
-        config = initialization.PyTorchDefaultInitConfig()
-        assert config is not None
 
         # GPT-2 config with required fields
         config = initialization.GPT2InitConfig(
@@ -276,10 +275,6 @@ class TestLLMConfigs:
 
     def test_gpt2_config_validation(self):
         """Test GPT-2 specific validation."""
-        # Project
-        from pretraining.configs.model.components import embeddings
-        from pretraining.configs.model.components import heads
-
         # Create configs with mismatched dimensions
         token_config = embeddings.TokenEmbeddingConfig(
             vocab_size=1000, embedding_dim=64, embedding_dropout=0.0, init_std=0.02
@@ -331,3 +326,58 @@ class TestLLMConfigs:
         assert "position embedding_dim" in str(exc_info.value)
         assert "must match" in str(exc_info.value)
         assert "transformer hidden_dim" in str(exc_info.value)
+
+    def test_gpt2_requires_tied_embeddings(self):
+        """Test that GPT-2 requires tied embeddings."""
+        # Create a valid base config
+        token_config = embeddings.TokenEmbeddingConfig(
+            vocab_size=1000, embedding_dim=64, embedding_dropout=0.0, init_std=0.02
+        )
+        position_config = embeddings.LearnedPositionEmbeddingConfig(
+            max_position_embeddings=128, embedding_dim=64, init_std=0.02
+        )
+        norm_config = normalization.LayerNormConfig(norm_eps=1e-5, bias=True)
+        attn_config = attention.MultiHeadAttentionConfig(
+            num_heads=4,
+            dropout=0.0,
+            bias=True,
+            max_seq_length=128,
+            is_causal=True,
+            use_flash_attention=False,
+        )
+        ffn_config = feedforward.FFNConfig(
+            intermediate_dim=256, activation="gelu", dropout=0.0, bias=True
+        )
+        transformer_config = transformer.TransformerConfig(
+            vocab_size=1000,
+            hidden_dim=64,
+            n_layers=2,
+            block_size=128,
+            normalization=norm_config,
+            attention=attn_config,
+            ffn=ffn_config,
+        )
+
+        # Test untied embeddings (should fail)
+        with pytest.raises(ValueError, match="GPT-2 requires tied embeddings"):
+            gpt.GPT2Config(
+                token_embedding=token_config,
+                position_embedding=position_config,
+                transformer=transformer_config,
+                output_head=heads.OutputHeadConfig(tie_word_embeddings=False, lm_head_bias=False),
+                weight_init=initialization.GPT2InitConfig(
+                    std=0.02, residual_pattern="c_proj", position_init_std=0.02
+                ),
+            )
+
+        # Test lm_head_bias with tied embeddings (should fail)
+        with pytest.raises(ValueError, match="GPT-2 cannot use lm_head_bias"):
+            gpt.GPT2Config(
+                token_embedding=token_config,
+                position_embedding=position_config,
+                transformer=transformer_config,
+                output_head=heads.OutputHeadConfig(tie_word_embeddings=True, lm_head_bias=True),
+                weight_init=initialization.GPT2InitConfig(
+                    std=0.02, residual_pattern="c_proj", position_init_std=0.02
+                ),
+            )

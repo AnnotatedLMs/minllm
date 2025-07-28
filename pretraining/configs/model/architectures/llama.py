@@ -21,6 +21,24 @@ class Llama3Config(base.BaseLLMConfig):
         if self.transformer.rope is None:
             raise ValueError("Llama architecture requires RoPE config")
 
+        # Llama doesn't traditionally use tied embeddings
+        if self.output_head.tie_word_embeddings:
+            raise ValueError(
+                "Llama traditionally uses separate output projection (tie_word_embeddings=False)"
+            )
+
+        # Llama doesn't traditionally use bias in transformer layers
+        if self.transformer.bias:
+            raise ValueError("Llama traditionally uses no bias in transformer layers (bias=False)")
+
+        # Ensure we're using RMSNorm (Llama's traditional normalization)
+        if not isinstance(self.transformer.normalization, normalization.RMSNormConfig):
+            raise ValueError("Llama traditionally uses RMSNorm normalization")
+
+        # Ensure we're using GroupedQueryAttention (for GQA support)
+        if not isinstance(self.transformer.attention, attention.GroupedQueryAttentionConfig):
+            raise ValueError("Llama traditionally uses GroupedQueryAttention for GQA support")
+
         return self
 
     @classmethod
