@@ -1,8 +1,3 @@
-"""
-Memory-mapped dataset for efficient pretraining data loading.
-Expects pre-tokenized data in .bin format.
-"""
-
 # Standard Library
 import os
 import pathlib
@@ -17,7 +12,7 @@ import torch
 from pretraining.utils.training import distributed
 
 
-class PretrainDataset:
+class PretrainDataset(torch.utils.data.Dataset):
     """
     Memory-mapped dataset for GPT pretraining.
 
@@ -28,9 +23,12 @@ class PretrainDataset:
     The data should be pre-tokenized and saved as numpy arrays.
     """
 
-    def __init__(self, data_dir: pathlib.Path, split: typing.Literal["train", "val"]):
+    def __init__(
+        self, data_dir: pathlib.Path, split: typing.Literal["train", "val"], block_size: int
+    ):
         self.data_dir = data_dir
         self.split = split
+        self.block_size = block_size
         self.data_path = data_dir / f"{split}.bin"
 
         if not self.data_path.exists():
@@ -39,7 +37,14 @@ class PretrainDataset:
             )
 
         # Get data length without loading into memory
-        self._len = os.path.getsize(self.data_path) // np.dtype(np.uint16).itemsize
+        total_tokens = os.path.getsize(self.data_path) // np.dtype(np.uint16).itemsize
+
+        # Calculate number of valid sequences
+        self._len = max(0, total_tokens - block_size)
+        if self._len == 0:
+            raise ValueError(
+                f"Dataset too small ({total_tokens} tokens) for block_size={block_size}"
+            )
 
     def __len__(self) -> int:
         return self._len

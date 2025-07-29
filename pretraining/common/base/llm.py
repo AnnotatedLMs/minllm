@@ -8,6 +8,8 @@ import torch
 
 # Project
 from pretraining.common.base import core
+from pretraining.common.base import inputs
+from pretraining.common.base import outputs
 from pretraining.configs.model import initialization
 from pretraining.configs.model.architectures import base as arch_base
 from pretraining.utils import weight_init
@@ -23,59 +25,39 @@ class BaseLLM(core.BaseTorchModule, abc.ABC):
     @abc.abstractmethod
     def training_forward(
         self,
-        idx: jaxtyping.Int[torch.Tensor, "batch seq"],
-        targets: jaxtyping.Int[torch.Tensor, "batch seq"],
-        **kwargs,
-    ) -> typing.Union[
-        torch.Tensor,
-        typing.Tuple[torch.Tensor, jaxtyping.Float[torch.Tensor, "batch seq vocab"]],
-        typing.Tuple[
-            torch.Tensor,
-            jaxtyping.Float[torch.Tensor, "batch seq vocab"],
-            typing.Dict[str, typing.Any],
-        ],
-    ]:
+        training_inputs: inputs.TrainingInputs,
+    ) -> outputs.TrainingOutput:
         """
         Forward pass for training.
 
         Args:
-            idx: Input token indices
-            targets: Target tokens for loss computation
-            **kwargs: Additional architecture-specific arguments such as:
-                - attention_mask: Attention mask for the sequence
-                - output_hidden_states: Whether to return all hidden states
-                - return_logits: Whether to return logits in addition to loss
-                - etc.
+            training_inputs: TrainingInputs containing:
+                - input_ids: Input token indices
+                - labels: Target tokens for loss computation
+                - attention_mask: Optional attention mask
+                - mtp_targets: Optional multi-token prediction targets (for DeepSeek3)
 
         Returns:
-            One of:
-            - Loss tensor (default)
-            - Tuple of (loss, logits) (if return_logits=True)
-            - Tuple of (loss, logits, extras_dict) (if extras needed)
-
-        The extras_dict may contain:
-            - hidden_states: All hidden states if requested
-            - aux_losses: Auxiliary losses (e.g., from MoE)
-            - mtp_logits: Multi-token prediction logits
-            - etc.
+            TrainingOutput containing:
+                - loss: Main cross-entropy loss
+                - mtp_losses: Optional list of MTP losses (for DeepSeek3)
+                - aux_losses: Optional list of auxiliary losses (e.g., from MoE)
         """
         pass
 
     @abc.abstractmethod
     def inference_forward(
         self,
-        idx: jaxtyping.Int[torch.Tensor, "batch seq"],
-        **kwargs,
+        inference_inputs: inputs.InferenceInputs,
     ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
         """
         Forward pass for inference/generation.
 
         Args:
-            idx: Input token indices
-            **kwargs: Additional architecture-specific arguments such as:
-                - attention_mask: Attention mask for the sequence
+            inference_inputs: InferenceInputs containing:
+                - input_ids: Input token indices
+                - attention_mask: Optional attention mask
                 - position_offset: Starting position for RoPE (for models with KV cache)
-                - etc.
 
         Returns:
             Logits tensor of shape [batch, seq, vocab]
@@ -172,12 +154,15 @@ class BaseLLM(core.BaseTorchModule, abc.ABC):
         """
         # This is a default implementation that can be overridden by subclasses
         for _ in range(max_new_tokens):
-            # Get logits from the model
-            logits = self.forward(idx, targets=None, **kwargs)
+            # Create InferenceInputs
+            inference_inputs = inputs.InferenceInputs(
+                input_ids=idx,
+                attention_mask=kwargs.get("attention_mask"),
+                position_offset=kwargs.get("position_offset", 0),
+            )
 
-            # Handle different return types
-            if isinstance(logits, tuple):
-                logits = logits[0]
+            # Get logits from the model
+            logits = self.inference_forward(inference_inputs)
 
             # Focus on the last token logits
             logits = logits[:, -1, :] / temperature

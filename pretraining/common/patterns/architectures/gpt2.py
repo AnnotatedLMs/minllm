@@ -7,7 +7,9 @@ import torch
 import torch.nn as nn
 
 # Project
+from pretraining.common.base import inputs
 from pretraining.common.base import llm
+from pretraining.common.base import outputs
 from pretraining.common.patterns.blocks import gpt2 as gpt2_blocks
 from pretraining.common.patterns.position import learned
 from pretraining.configs.model import initialization
@@ -310,41 +312,28 @@ class GPT2(llm.BaseLLM):
 
     def training_forward(
         self,
-        idx: jaxtyping.Int[torch.Tensor, "batch seq"],
-        targets: jaxtyping.Int[torch.Tensor, "batch seq"],
-        attention_mask: typing.Optional[torch.Tensor] = None,
-        output_hidden_states: bool = False,
-        **kwargs,
-    ) -> typing.Union[
-        torch.Tensor,
-        typing.Tuple[torch.Tensor, jaxtyping.Float[torch.Tensor, "batch seq vocab"]],
-        typing.Tuple[
-            torch.Tensor,
-            jaxtyping.Float[torch.Tensor, "batch seq vocab"],
-            typing.Dict[str, typing.Any],
-        ],
-    ]:
+        training_inputs: inputs.TrainingInputs,
+    ) -> outputs.TrainingOutput:
         """
         Forward pass for training.
 
         Args:
-            idx: Input token indices [batch, seq]
-            targets: Target tokens for loss computation
-            attention_mask: Optional attention mask
-            output_hidden_states: Whether to return all hidden states
-            **kwargs: Additional arguments (for compatibility)
+            training_inputs: TrainingInputs containing:
+                - input_ids: Input token indices [batch, seq]
+                - labels: Target tokens for loss computation
+                - attention_mask: Optional attention mask
+                - mtp_targets: Not used for GPT2
 
         Returns:
-            - Just loss by default
-            - (loss, logits) if return_logits=True in kwargs
-            - (loss, logits, extras) if output_hidden_states=True
+            TrainingOutput containing:
+                - loss: Cross-entropy loss for next-token prediction
         """
-        batch_size, seq_len = idx.shape
-        device = idx.device
+        batch_size, seq_len = training_inputs.input_ids.shape
+        device = training_inputs.input_ids.device
 
         # 1. Embed tokens
         token_embeds: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        token_embeds = self.token_embeddings(idx)
+        token_embeds = self.token_embeddings(training_inputs.input_ids)
 
         # 2. Get position embeddings
         pos_embeds = self._get_position_embeddings(batch_size, seq_len, device)
@@ -354,31 +343,21 @@ class GPT2(llm.BaseLLM):
 
         # 4. Apply transformer blocks
         hidden_states, all_hidden_states = self._apply_transformer_blocks(
-            x, attention_mask=attention_mask, output_hidden_states=output_hidden_states
+            x, attention_mask=training_inputs.attention_mask, output_hidden_states=False
         )
 
         # 5. Compute logits
         logits = self._compute_logits(hidden_states)
 
         # 6. Compute loss
-        loss = self.compute_loss(logits, targets)
+        loss = self.compute_loss(logits, training_inputs.labels)
 
-        # Return based on what's requested
-        return_logits = kwargs.get("return_logits", False)
-        if output_hidden_states:
-            extras = {"hidden_states": all_hidden_states}
-            return loss, logits, extras
-        elif return_logits:
-            return loss, logits
-        else:
-            return loss
+        return outputs.TrainingOutput(loss=loss)
 
     @torch.no_grad()
     def inference_forward(
         self,
-        idx: jaxtyping.Int[torch.Tensor, "batch seq"],
-        attention_mask: typing.Optional[torch.Tensor] = None,
-        **kwargs,
+        inference_inputs: inputs.InferenceInputs,
     ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
         """
         Forward pass for inference/generation.
@@ -386,19 +365,20 @@ class GPT2(llm.BaseLLM):
         Note: GPT-2 doesn't use KV cache, so this is simpler than Llama.
 
         Args:
-            idx: Input token indices [batch, seq]
-            attention_mask: Optional attention mask
-            **kwargs: Additional arguments (for compatibility)
+            inference_inputs: InferenceInputs containing:
+                - input_ids: Input token indices [batch, seq]
+                - attention_mask: Optional attention mask
+                - position_offset: Not used for GPT2
 
         Returns:
             Logits tensor [batch, seq, vocab]
         """
-        batch_size, seq_len = idx.shape
-        device = idx.device
+        batch_size, seq_len = inference_inputs.input_ids.shape
+        device = inference_inputs.input_ids.device
 
         # 1. Embed tokens (no dropout during inference)
         token_embeds: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        token_embeds = self.token_embeddings(idx)
+        token_embeds = self.token_embeddings(inference_inputs.input_ids)
 
         # 2. Get position embeddings
         pos_embeds = self._get_position_embeddings(batch_size, seq_len, device)
@@ -408,7 +388,7 @@ class GPT2(llm.BaseLLM):
 
         # 4. Apply transformer blocks
         hidden_states, _ = self._apply_transformer_blocks(
-            x, attention_mask=attention_mask, output_hidden_states=False
+            x, attention_mask=inference_inputs.attention_mask, output_hidden_states=False
         )
 
         # 5. Compute logits

@@ -11,9 +11,8 @@ from pretraining.utils.training import metrics as metrics_module
 @torch.no_grad()
 def estimate_loss(
     model: torch.nn.Module,
-    dataloader: typing.Any,  # PretrainDataLoader
+    dataloader: typing.Optional[torch.utils.data.DataLoader],
     num_batches: int = 50,
-    split: str = "val",
 ) -> typing.Dict[str, float]:
     """Estimate loss on a data split.
 
@@ -22,18 +21,36 @@ def estimate_loss(
 
     Args:
         model: Model to evaluate
-        dataloader: Data loader with get_batch method
+        dataloader: PyTorch DataLoader for evaluation
         num_batches: Number of batches to evaluate on
-        split: Data split to use ("train" or "val")
 
     Returns:
         Dictionary with loss and perplexity
     """
+    if dataloader is None:
+        return {"val/loss": float("inf"), "val/perplexity": float("inf")}
+
     model.eval()
     losses = []
 
-    for _ in range(num_batches):
-        inputs, targets = dataloader.get_batch(split)
+    # Create iterator
+    data_iter = iter(dataloader)
+
+    for i in range(num_batches):
+        try:
+            batch = next(data_iter)
+        except StopIteration:
+            # If we run out of data, break early
+            if i == 0:
+                raise ValueError("Validation dataloader is empty")
+            break
+
+        # Move batch to device
+        device = next(model.parameters()).device
+        batch = {k: v.to(device) for k, v in batch.items()}
+
+        inputs = batch["input_ids"]
+        targets = batch["labels"]
 
         # Use inference_forward for efficiency (no intermediate activations)
         logits = model.inference_forward(inputs)
@@ -47,4 +64,4 @@ def estimate_loss(
     perplexity = metrics_module.compute_perplexity(avg_loss)
 
     model.train()
-    return {f"{split}/loss": avg_loss, f"{split}/perplexity": perplexity}
+    return {"val/loss": avg_loss, "val/perplexity": perplexity}

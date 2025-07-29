@@ -27,6 +27,7 @@ class TrainingState(base.BaseConfig):
     # Progress tracking
     iteration: int = 0
     tokens_seen: int = 0
+    epoch: int = 0
 
     # Timing - use Field with default_factory for time-based defaults
     start_time: float = pydantic.Field(default_factory=time.time)
@@ -104,6 +105,7 @@ class TrainingState(base.BaseConfig):
         return {
             "iteration": self.iteration,
             "tokens_seen": self.tokens_seen,
+            "epoch": self.epoch,
             "best_val_loss": self.best_val_loss,
             "rng_state": {
                 "torch": torch.get_rng_state(),
@@ -119,6 +121,7 @@ class TrainingState(base.BaseConfig):
         """
         self.iteration = state_dict["iteration"]
         self.tokens_seen = state_dict["tokens_seen"]
+        self.epoch = state_dict.get("epoch", 0)
         self.best_val_loss = state_dict.get("best_val_loss", float("inf"))
 
         # Restore RNG states

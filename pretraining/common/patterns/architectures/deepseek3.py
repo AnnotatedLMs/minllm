@@ -7,7 +7,9 @@ import torch
 import torch.nn as nn
 
 # Project
+from pretraining.common.base import inputs
 from pretraining.common.base import llm
+from pretraining.common.base import outputs
 from pretraining.common.patterns.blocks import deepseek3 as deepseek3_blocks
 from pretraining.common.patterns.heads import multi_token
 from pretraining.common.patterns.position import rope_partial
@@ -253,45 +255,34 @@ class DeepSeek3(llm.BaseLLM):
 
     def training_forward(
         self,
-        idx: jaxtyping.Int[torch.Tensor, "batch seq"],
-        targets: jaxtyping.Int[torch.Tensor, "batch seq"],
-        attention_mask: typing.Optional[torch.Tensor] = None,
-        output_hidden_states: bool = False,
-        **kwargs,
-    ) -> typing.Union[
-        torch.Tensor,
-        typing.Tuple[torch.Tensor, jaxtyping.Float[torch.Tensor, "batch seq vocab"]],
-        typing.Tuple[
-            torch.Tensor,
-            jaxtyping.Float[torch.Tensor, "batch seq vocab"],
-            typing.Dict[str, typing.Any],
-        ],
-    ]:
+        training_inputs: inputs.TrainingInputs,
+    ) -> outputs.TrainingOutput:
         """
         Forward pass for training.
 
         Args:
-            idx: Input token indices [batch, seq]
-            targets: Target tokens for loss computation
-            attention_mask: Optional attention mask
-            output_hidden_states: Whether to return all hidden states
-            **kwargs: Additional arguments (for compatibility)
+            training_inputs: TrainingInputs containing:
+                - input_ids: Input token indices [batch, seq]
+                - labels: Target tokens for loss computation
+                - attention_mask: Optional attention mask
+                - mtp_targets: Optional multi-token prediction targets [batch, depth, seq]
 
         Returns:
-            - Just loss by default
-            - (loss, logits) if return_logits=True in kwargs
-            - (loss, logits, extras) if additional outputs requested
+            TrainingOutput containing:
+                - loss: Cross-entropy loss for next-token prediction
+                - mtp_losses: List of losses for multi-token predictions (if MTP enabled)
+                - aux_losses: List of auxiliary losses from MoE (if present)
         """
         # 1. Embed tokens and apply dropout
         x: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        x = self.token_embeddings(idx)
+        x = self.token_embeddings(training_inputs.input_ids)
         x = self.embed_dropout(x)
 
         # 2. Apply transformer blocks
         hidden_states, all_hidden_states, aux_losses = self._apply_transformer_blocks(
             x,
-            attention_mask=attention_mask,
-            output_hidden_states=output_hidden_states,
+            attention_mask=training_inputs.attention_mask,
+            output_hidden_states=False,
         )
 
         # 3. Compute logits
@@ -301,30 +292,38 @@ class DeepSeek3(llm.BaseLLM):
         mtp_logits = self._compute_mtp_logits(hidden_states)
 
         # 5. Compute loss
-        loss = self.compute_loss(logits, targets, aux_losses=aux_losses)
+        loss = self.compute_loss(logits, training_inputs.labels, aux_losses=aux_losses)
 
-        # Return based on what's requested
-        return_logits = kwargs.get("return_logits", False)
-        if output_hidden_states or mtp_logits is not None or aux_losses:
-            extras = {}
-            if output_hidden_states:
-                extras["hidden_states"] = all_hidden_states
-            if mtp_logits is not None:
-                extras["mtp_logits"] = mtp_logits
-            if aux_losses:
-                extras["aux_losses"] = aux_losses
-            return loss, logits, extras
-        elif return_logits:
-            return loss, logits
-        else:
-            return loss
+        # 6. Compute MTP losses if targets provided
+        mtp_losses = None
+        if mtp_logits is not None and training_inputs.mtp_targets is not None:
+            # Compute individual MTP losses for each depth
+            mtp_losses = []
+            for d in range(len(mtp_logits)):
+                depth_logits = mtp_logits[d]
+                depth_targets = training_inputs.mtp_targets[:, d, :]
+
+                # Flatten for loss computation
+                depth_logits_flat = depth_logits.reshape(-1, depth_logits.size(-1))
+                depth_targets_flat = depth_targets.reshape(-1)
+
+                # Compute loss for this depth
+                depth_loss = nn.functional.cross_entropy(
+                    depth_logits_flat, depth_targets_flat, ignore_index=-100
+                )
+                mtp_losses.append(depth_loss)
+
+        # Return TrainingOutput
+        return outputs.TrainingOutput(
+            loss=loss,
+            mtp_losses=mtp_losses,
+            aux_losses=aux_losses,
+        )
 
     @torch.no_grad()
     def inference_forward(
         self,
-        idx: jaxtyping.Int[torch.Tensor, "batch seq"],
-        attention_mask: typing.Optional[torch.Tensor] = None,
-        **kwargs,
+        inference_inputs: inputs.InferenceInputs,
     ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
         """
         Forward pass for inference/generation.
@@ -332,21 +331,22 @@ class DeepSeek3(llm.BaseLLM):
         Note: DeepSeek doesn't use KV cache.
 
         Args:
-            idx: Input token indices [batch, seq]
-            attention_mask: Optional attention mask
-            **kwargs: Additional arguments (for compatibility)
+            inference_inputs: InferenceInputs containing:
+                - input_ids: Input token indices [batch, seq]
+                - attention_mask: Optional attention mask
+                - position_offset: Not used for DeepSeek3
 
         Returns:
             Logits tensor [batch, seq, vocab]
         """
         # 1. Embed tokens (no dropout during inference)
         x: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        x = self.token_embeddings(idx)
+        x = self.token_embeddings(inference_inputs.input_ids)
 
         # 2. Apply transformer blocks
         hidden_states, _, _ = self._apply_transformer_blocks(
             x,
-            attention_mask=attention_mask,
+            attention_mask=inference_inputs.attention_mask,
             output_hidden_states=False,
         )
 
@@ -354,6 +354,49 @@ class DeepSeek3(llm.BaseLLM):
         logits = self._compute_logits(hidden_states)
 
         return logits
+
+    def _compute_mtp_loss(
+        self,
+        mtp_logits: typing.List[jaxtyping.Float[torch.Tensor, "batch seq vocab"]],
+        mtp_targets: jaxtyping.Int[torch.Tensor, "batch depth seq"],
+        ignore_index: int = -100,
+    ) -> torch.Tensor:
+        """Compute multi-token prediction loss.
+
+        Args:
+            mtp_logits: List of logits for each depth
+            mtp_targets: Target tokens for each depth [batch, depth, seq]
+            ignore_index: Index to ignore in loss
+
+        Returns:
+            Average MTP loss across all depths
+        """
+        mtp_losses = []
+        batch_size, depth, seq_len = mtp_targets.shape
+
+        for d in range(depth):
+            if d < len(mtp_logits):
+                # Get logits for this depth
+                depth_logits = mtp_logits[d]
+
+                # Get targets for this depth
+                depth_targets = mtp_targets[:, d, :]
+
+                # Flatten for loss computation
+                depth_logits = depth_logits.reshape(-1, depth_logits.size(-1))
+                depth_targets = depth_targets.reshape(-1)
+
+                # Compute loss for this depth
+                depth_loss = nn.functional.cross_entropy(
+                    depth_logits, depth_targets, ignore_index=ignore_index
+                )
+                mtp_losses.append(depth_loss)
+
+        # Average losses across depths
+        if mtp_losses:
+            return sum(mtp_losses) / len(mtp_losses)
+        else:
+            return torch.tensor(0.0, device=mtp_targets.device)
 
     def compute_loss(
         self,

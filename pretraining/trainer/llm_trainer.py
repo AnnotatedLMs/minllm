@@ -8,8 +8,8 @@ import torch.nn as nn
 from torch.nn import parallel
 
 # Project
+from pretraining.common.base import inputs
 from pretraining.configs.training import trainer_configs
-from pretraining.data import dataloader
 from pretraining.trainer import checkpoint_data as checkpoint_data_module
 from pretraining.utils import logger as logger_utils
 from pretraining.utils import torch_utils
@@ -49,8 +49,9 @@ class LLMTrainer:
         config: trainer_configs.TrainingLoopConfig,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler,
-        dataloader: dataloader.PretrainDataLoader,
+        train_dataloader: torch.utils.data.DataLoader,
         device: torch.device,
+        val_dataloader: typing.Optional[torch.utils.data.DataLoader] = None,
         rank: int = 0,
         world_size: int = 1,
     ):
@@ -62,8 +63,9 @@ class LLMTrainer:
             config: Training configuration
             optimizer: Configured optimizer
             scheduler: Configured learning rate scheduler
-            dataloader: Data loader for train/val splits
+            train_dataloader: Training data loader
             device: Device to run on
+            val_dataloader: Optional validation data loader
             rank: Process rank for distributed training
             world_size: Total number of processes
         """
@@ -72,7 +74,8 @@ class LLMTrainer:
         self.config = config
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.dataloader = dataloader
+        self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
         self.device = device
         self.rank = rank
         self.world_size = world_size
@@ -114,18 +117,25 @@ class LLMTrainer:
             if self.world_size > 1:
                 self.logger.info(f"Using distributed training with {self.world_size} processes")
 
-    def train_step(
-        self, batch: typing.Tuple[torch.Tensor, torch.Tensor]
-    ) -> typing.Dict[str, float]:
+    def train_step(self, batch: typing.Dict[str, torch.Tensor]) -> typing.Dict[str, float]:
         """Run single training step.
 
         Args:
-            batch: Tuple of (inputs, targets)
+            batch: Dictionary with 'input_ids' and 'labels' from collator
 
         Returns:
             Dictionary of metrics for this step
         """
-        inputs, targets = batch
+        # Move batch to device
+        batch = {k: v.to(self.device) for k, v in batch.items()}
+
+        # Create TrainingInputs from batch
+        training_inputs = inputs.TrainingInputs(
+            input_ids=batch["input_ids"],
+            labels=batch["labels"],
+            attention_mask=batch.get("attention_mask"),
+            mtp_targets=batch.get("mtp_targets"),
+        )
 
         # Mixed precision context
         autocast_context = (
@@ -134,7 +144,7 @@ class LLMTrainer:
 
         with autocast_context(enabled=self.config.training.mixed_precision):
             # Forward pass through distributed model
-            model_output = self.dist_model.training_forward(inputs, targets, return_logits=False)
+            model_output = self.dist_model.training_forward(training_inputs)
 
             # Extract losses
             losses = loss_utils.LossHandler.extract_losses(model_output)
@@ -202,6 +212,9 @@ class LLMTrainer:
         # Training loop
         self.dist_model.train()
 
+        # Create iterator from dataloader
+        train_iter = iter(self.train_dataloader)
+
         while not self.state.should_stop():
             # Start iteration timer
             iter_start_time = time.time()
@@ -209,7 +222,13 @@ class LLMTrainer:
 
             # Accumulate gradients over multiple batches
             for _ in range(self.config.training.gradient_accumulation_steps):
-                batch = self.dataloader.get_batch("train")
+                try:
+                    batch = next(train_iter)
+                except StopIteration:
+                    # Restart iterator when exhausted
+                    train_iter = iter(self.train_dataloader)
+                    batch = next(train_iter)
+
                 step_metrics = self.train_step(batch)
 
                 # Update metrics tracker
@@ -220,8 +239,10 @@ class LLMTrainer:
             optim_metrics = self.optimizer_step()
 
             # Update state
-            batch_size = batch[0].shape[0] * self.config.training.gradient_accumulation_steps
-            seq_length = batch[0].shape[1]
+            batch_size = (
+                batch["input_ids"].shape[0] * self.config.training.gradient_accumulation_steps
+            )
+            seq_length = batch["input_ids"].shape[1]
             self.state.update(batch_size, seq_length)
 
             # Compute throughput metrics
@@ -264,7 +285,7 @@ class LLMTrainer:
                     self.logger.info("Running evaluation...")
 
                 eval_metrics = evaluation.estimate_loss(
-                    self.dist_model, self.dataloader, num_batches=50
+                    self.dist_model, self.val_dataloader, num_batches=50
                 )
 
                 # Check if best model

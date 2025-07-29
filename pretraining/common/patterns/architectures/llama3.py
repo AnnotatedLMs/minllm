@@ -7,7 +7,9 @@ import torch
 import torch.nn as nn
 
 # Project
+from pretraining.common.base import inputs
 from pretraining.common.base import llm
+from pretraining.common.base import outputs
 from pretraining.common.patterns.attention import grouped_query
 from pretraining.common.patterns.blocks import llama3 as llama3_blocks
 from pretraining.common.patterns.cache import kv_cache
@@ -220,71 +222,48 @@ class Llama3(llm.BaseLLM):
 
     def training_forward(
         self,
-        idx: jaxtyping.Int[torch.Tensor, "batch seq"],
-        targets: jaxtyping.Int[torch.Tensor, "batch seq"],
-        attention_mask: typing.Optional[torch.Tensor] = None,
-        output_hidden_states: bool = False,
-        **kwargs,
-    ) -> typing.Union[
-        torch.Tensor,
-        typing.Tuple[torch.Tensor, jaxtyping.Float[torch.Tensor, "batch seq vocab"]],
-        typing.Tuple[
-            torch.Tensor,
-            jaxtyping.Float[torch.Tensor, "batch seq vocab"],
-            typing.Dict[str, typing.Any],
-        ],
-    ]:
+        training_inputs: inputs.TrainingInputs,
+    ) -> outputs.TrainingOutput:
         """
         Forward pass for training - no KV cache.
 
         Args:
-            idx: Input token indices [batch, seq]
-            targets: Target tokens for loss computation
-            attention_mask: Optional attention mask
-            output_hidden_states: Whether to return all hidden states
-            **kwargs: Additional arguments (for compatibility)
+            training_inputs: TrainingInputs containing:
+                - input_ids: Input token indices [batch, seq]
+                - labels: Target tokens for loss computation
+                - attention_mask: Optional attention mask
+                - mtp_targets: Not used for Llama3
 
         Returns:
-            - Just loss by default
-            - (loss, logits) if return_logits=True in kwargs
-            - (loss, logits, extras) if output_hidden_states=True
+            TrainingOutput containing:
+                - loss: Cross-entropy loss for next-token prediction
         """
         # 1. Embed tokens and apply dropout
         x: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        x = self.token_embeddings(idx)
+        x = self.token_embeddings(training_inputs.input_ids)
         x = self.embed_dropout(x)
 
         # 2. Apply transformer blocks (no position offset for training)
         hidden_states, all_hidden_states = self._apply_transformer_blocks(
             x,
-            attention_mask=attention_mask,
+            attention_mask=training_inputs.attention_mask,
             position_offset=0,  # Always 0 for training
-            output_hidden_states=output_hidden_states,
+            output_hidden_states=False,
         )
 
         # 3. Compute logits
         logits = self._compute_logits(hidden_states)
 
         # 4. Compute loss
-        loss = self.compute_loss(logits, targets)
+        loss = self.compute_loss(logits, training_inputs.labels)
 
-        # Return based on what's requested
-        return_logits = kwargs.get("return_logits", False)
-        if output_hidden_states:
-            extras = {"hidden_states": all_hidden_states}
-            return loss, logits, extras
-        elif return_logits:
-            return loss, logits
-        else:
-            return loss
+        # Return TrainingOutput
+        return outputs.TrainingOutput(loss=loss)
 
     @torch.no_grad()
     def inference_forward(
         self,
-        idx: jaxtyping.Int[torch.Tensor, "batch seq"],
-        position_offset: int = 0,
-        attention_mask: typing.Optional[torch.Tensor] = None,
-        **kwargs,
+        inference_inputs: inputs.InferenceInputs,
     ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
         """
         Forward pass for inference/generation with KV cache support.
@@ -292,23 +271,23 @@ class Llama3(llm.BaseLLM):
         This method assumes install_kv_cache() has been called first.
 
         Args:
-            idx: Input token indices [batch, seq]
-            position_offset: Starting position for RoPE (for incremental generation)
-            attention_mask: Optional attention mask
-            **kwargs: Additional arguments (for compatibility)
+            inference_inputs: InferenceInputs containing:
+                - input_ids: Input token indices [batch, seq]
+                - attention_mask: Optional attention mask
+                - position_offset: Starting position for RoPE (for incremental generation)
 
         Returns:
             Logits tensor [batch, seq, vocab]
         """
         # 1. Embed tokens (no dropout during inference)
         x: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        x = self.token_embeddings(idx)
+        x = self.token_embeddings(inference_inputs.input_ids)
 
         # 2. Apply transformer blocks with position offset
         hidden_states, _ = self._apply_transformer_blocks(
             x,
-            attention_mask=attention_mask,
-            position_offset=position_offset,
+            attention_mask=inference_inputs.attention_mask,
+            position_offset=inference_inputs.position_offset,
             output_hidden_states=False,
         )
 
@@ -428,11 +407,21 @@ class Llama3(llm.BaseLLM):
         position_offset = 0
         if use_cache:
             # Process full prompt with position offset 0
-            logits = self.inference_forward(idx, position_offset=position_offset)
+            inference_inputs = inputs.InferenceInputs(
+                input_ids=idx,
+                attention_mask=None,
+                position_offset=position_offset,
+            )
+            logits = self.inference_forward(inference_inputs)
             position_offset = seq_len
         else:
             # Without cache, we'll process the full sequence each time
-            logits = self.inference_forward(idx)
+            inference_inputs = inputs.InferenceInputs(
+                input_ids=idx,
+                attention_mask=None,
+                position_offset=0,
+            )
+            logits = self.inference_forward(inference_inputs)
 
         # Start generation loop
         generated = idx
@@ -459,14 +448,24 @@ class Llama3(llm.BaseLLM):
             # Get logits for next token
             if use_cache:
                 # Only process the new token with updated position
-                logits = self.inference_forward(idx_next, position_offset=position_offset)
+                inference_inputs = inputs.InferenceInputs(
+                    input_ids=idx_next,
+                    attention_mask=None,
+                    position_offset=position_offset,
+                )
+                logits = self.inference_forward(inference_inputs)
                 position_offset += 1
             else:
                 # Process full sequence (less efficient)
                 # Crop if sequence is too long
                 if generated.size(1) > self.block_size:
                     generated = generated[:, -self.block_size :]
-                logits = self.inference_forward(generated)
+                inference_inputs = inputs.InferenceInputs(
+                    input_ids=generated,
+                    attention_mask=None,
+                    position_offset=0,
+                )
+                logits = self.inference_forward(inference_inputs)
 
         # Clean up KV cache
         if use_cache:

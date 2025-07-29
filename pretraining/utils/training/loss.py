@@ -4,6 +4,9 @@ import typing
 # Third Party
 import torch
 
+# Project
+from pretraining.common.base import outputs
+
 
 class LossHandler:
     """Handles loss extraction and aggregation from model outputs.
@@ -27,55 +30,39 @@ class LossHandler:
 
     @staticmethod
     def extract_losses(
-        model_output: typing.Union[torch.Tensor, typing.Tuple[torch.Tensor, ...]],
+        model_output: outputs.TrainingOutput,
     ) -> typing.Dict[str, torch.Tensor]:
         """Extract losses from model output.
 
-        Model training_forward can return:
-        - Single tensor: Just the main loss
-        - Tuple of 2: (main_loss, logits)
-        - Tuple of 3: (main_loss, logits, extras) where extras has auxiliary losses
+        Takes the structured TrainingOutput from model.training_forward() and extracts
+        all loss components into a flat dictionary for aggregation and logging.
 
         Args:
-            model_output: Output from model.training_forward()
+            model_output: TrainingOutput containing:
+                - loss: Main language modeling loss (cross-entropy) [scalar tensor]
+                - mtp_losses: Optional list of multi-token prediction losses
+                              [list of scalar tensors, one per future position]
+                - aux_losses: Optional list of auxiliary losses (e.g., MoE load balancing)
+                              [list of scalar tensors, one per layer with MoE]
 
         Returns:
-            Dictionary mapping loss names to tensors
+            Dictionary mapping loss names to tensors:
+                - "loss": Main LM loss
+                - "mtp_loss_1", "mtp_loss_2", etc.: Individual MTP losses by position
+                - "aux_loss": Sum of all auxiliary losses (for MoE load balancing)
         """
         losses = {}
+        losses["loss"] = model_output.loss
 
-        # Handle single tensor output (just loss)
-        if isinstance(model_output, torch.Tensor):
-            losses["loss"] = model_output
-            return losses
+        # Add MTP losses if present
+        if model_output.mtp_losses:
+            for i, mtp_loss in enumerate(model_output.mtp_losses):
+                losses[f"mtp_loss_{i + 1}"] = mtp_loss
 
-        # Handle tuple output
-        if not isinstance(model_output, tuple):
-            raise ValueError(f"Expected tensor or tuple, got {type(model_output)}")
-
-        # First element is always main loss
-        losses["loss"] = model_output[0]
-
-        # Third element (if present) contains extras
-        if len(model_output) >= 3 and model_output[2] is not None:
-            extras = model_output[2]
-
-            # Handle auxiliary losses (e.g., from MoE)
-            if "aux_losses" in extras:
-                aux_losses = extras["aux_losses"]
-                if isinstance(aux_losses, list) and aux_losses:
-                    # Sum all auxiliary losses
-                    losses["aux_loss"] = sum(aux_losses)
-                elif isinstance(aux_losses, torch.Tensor):
-                    losses["aux_loss"] = aux_losses
-
-            # Handle MTP losses
-            if "mtp_losses" in extras:
-                mtp_losses = extras["mtp_losses"]
-                # MTP returns losses for each future position
-                for i, mtp_loss in enumerate(mtp_losses):
-                    if mtp_loss is not None:
-                        losses[f"mtp_loss_{i + 1}"] = mtp_loss
+        # Add auxiliary losses if present
+        if model_output.aux_losses:
+            # Sum all auxiliary losses
+            losses["aux_loss"] = sum(model_output.aux_losses)
 
         return losses
 

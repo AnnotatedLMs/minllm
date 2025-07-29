@@ -6,6 +6,7 @@
 - citations
 
 ## PRETRAINING
+- if isinstance(config.weight_init, initialization.GPT2InitConfig): BRITTLE
 - TRANSFORMER CONFIG: norm and attention set as base for conevneince but it might be misleading
 - TRAINING LOOP CONFIGS: config.training.max_grad_norm & self.config.training.mixed_precision not available
 - Add precision config (fp32/bf16/fp16) to training configs

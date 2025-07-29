@@ -25,7 +25,7 @@ from pretraining.configs import core
 from pretraining.configs import loader
 from pretraining.configs.model.architectures import gpt
 from pretraining.configs.training import execution_configs
-from pretraining.data import dataloader
+from pretraining.data import builder
 from pretraining.trainer import llm_trainer
 from pretraining.utils import logger as logger_utils
 from pretraining.utils import torch_utils
@@ -84,12 +84,39 @@ def main(trainer_config: core.TrainerConfig) -> None:
         num_training_steps=trainer_config.training.max_iters,
     )
 
-    # Build data loader
-    log.info("Setting up data loader...")
-    data_loader = dataloader.PretrainDataLoader(
-        data_config=trainer_config.training.data,
-        batch_config=trainer_config.training.batch,
-        device=device,
+    # Initialize checkpoint tracking variables
+    start_index = 0
+    epoch = 0
+    checkpoint_data = None
+
+    # Setup checkpointer and load checkpoint if exists (main process only)
+    checkpointer = None
+    if distributed.is_main_process():
+        checkpointer = checkpoint.Checkpointer(trainer_config.training.checkpoint)
+        checkpoint_data = checkpointer.load_checkpoint(str(device))
+        if checkpoint_data is not None:
+            log.info("Found checkpoint, will resume training...")
+            # Extract data position from checkpoint
+            if hasattr(checkpoint_data, "training_state_dict"):
+                start_index = checkpoint_data.training_state_dict.get("tokens_seen", 0)
+                epoch = checkpoint_data.training_state_dict.get("epoch", 0)
+
+    # Synchronize checkpoint info across processes
+    distributed.barrier()
+
+    # Build data loaders with checkpoint info
+    log.info("Setting up data loaders...")
+    train_dataloader = builder.build_train_dataloader(
+        training_config=trainer_config.training,
+        model_config=trainer_config.llm,
+        start_index=start_index,
+        epoch=epoch,
+    )
+
+    val_dataloader = builder.build_eval_dataloader(
+        training_config=trainer_config.training,
+        model_config=trainer_config.llm,
+        split="val",
     )
 
     # Initialize trainer
@@ -99,7 +126,8 @@ def main(trainer_config: core.TrainerConfig) -> None:
         config=trainer_config.training,
         optimizer=optim,
         scheduler=scheduler,
-        dataloader=data_loader,
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
         device=device,
         rank=distributed.get_global_rank(),
         world_size=distributed.get_world_size(),
@@ -108,17 +136,11 @@ def main(trainer_config: core.TrainerConfig) -> None:
     # Setup trainer components
     trainer.setup()
 
-    # Setup checkpointer (main process only)
-    checkpointer = None
-    if distributed.is_main_process():
-        checkpointer = checkpoint.Checkpointer(trainer_config.training.checkpoint)
-
-        # Check for existing checkpoint
-        checkpoint_data = checkpointer.load_checkpoint(str(device))
-        if checkpoint_data is not None:
-            log.info("Loading checkpoint...")
-            trainer.load_checkpoint_data(checkpoint_data)
-            log.info(f"Resumed from iteration {trainer.state.iteration}")
+    # Load checkpoint if we found one
+    if checkpoint_data is not None and distributed.is_main_process():
+        log.info("Loading checkpoint...")
+        trainer.load_checkpoint_data(checkpoint_data)
+        log.info(f"Resumed from iteration {trainer.state.iteration}")
 
     # Synchronize all processes
     distributed.barrier()
