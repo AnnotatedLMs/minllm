@@ -54,8 +54,8 @@ class SingleTokenPredictionHead(nn.Module):
 
     def forward(
         self,
-        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab_size"]:
+        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len vocab_size"]:
         """
         Project hidden states to vocabulary logits.
 
@@ -68,26 +68,3 @@ class SingleTokenPredictionHead(nn.Module):
         """
         logits = self.output_projection(hidden_states)
         return logits
-
-    def tie_weights(self, embeddings: nn.Embedding) -> None:
-        """
-        Tie output projection weights to input embedding weights.
-
-        What this means:
-        - Normally: Input embeddings and output projection are two separate matrices
-        - With tying: They share the SAME matrix (output uses transposed version)
-
-        Why do this?
-        - Saves parameters (one matrix instead of two)
-        - Enforces symmetry: if "dog" and "puppy" have similar input embeddings,
-          they'll also be predicted similarly
-
-        Example:
-        - Input embedding: token_id → embedding vector (lookup)
-        - Output projection: hidden_state → token scores (matrix multiply)
-        - With tying, both use the same underlying matrix
-
-        Used by: GPT-2 (by default)
-        Not used by: Llama, DeepSeek (they keep embeddings and output separate)
-        """
-        self.output_projection.weight = embeddings.weight

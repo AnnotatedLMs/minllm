@@ -7,10 +7,8 @@ import torch
 import torch.utils.data
 
 # Project
-from pretraining.configs.model.architectures import base as model_base
 from pretraining.configs.training import data_configs
 from pretraining.configs.training import trainer_configs
-from pretraining.data import collator as data_collator
 from pretraining.data import iterable_dataset
 from pretraining.data import memmap_dataset
 from pretraining.utils.training import distributed
@@ -43,99 +41,6 @@ def build_memmap_dataset(
     )
 
     return dataset
-
-
-def build_train_dataloader(
-    training_config: trainer_configs.TrainingLoopConfig,
-    model_config: model_base.BaseLLMConfig,
-    start_index: int = 0,
-    epoch: int = 0,
-) -> torch.utils.data.DataLoader:
-    """Build training dataloader with all components.
-
-    Args:
-        training_config: Full training configuration
-        model_config: Model configuration (for collator selection)
-        start_index: Resume from this global index
-        epoch: Current epoch for shuffling
-
-    Returns:
-        PyTorch DataLoader ready for training
-    """
-    # Build base dataset
-    base_dataset = build_memmap_dataset(
-        training_config.data,
-        split="train",
-        chunk_size=training_config.batch.sequence_length,
-    )
-
-    # Wrap in iterable dataset for distributed training
-    dataset = build_iterable_dataset(
-        base_dataset,
-        training_config,
-        start_index=start_index,
-        epoch=epoch,
-        drop_last=True,
-    )
-
-    # Build appropriate collator
-    collator = data_collator.build_collator(model_config)
-
-    # Create DataLoader
-    dataloader = build_dataloader(
-        dataset,
-        training_config,
-        collator=collator,
-        is_train=True,
-    )
-
-    return dataloader
-
-
-def build_eval_dataloader(
-    training_config: trainer_configs.TrainingLoopConfig,
-    model_config: model_base.BaseLLMConfig,
-    split: typing.Literal["val", "test"] = "val",
-) -> torch.utils.data.DataLoader:
-    """Build evaluation dataloader.
-
-    Args:
-        training_config: Full training configuration
-        model_config: Model configuration (for collator selection)
-        split: Evaluation split
-
-    Returns:
-        PyTorch DataLoader for evaluation
-    """
-    # Build base dataset
-    base_dataset = build_memmap_dataset(
-        training_config.data,
-        split=split,
-        chunk_size=training_config.batch.sequence_length,
-    )
-
-    # For eval, we don't shuffle and use DistributedSampler directly
-    sampler = build_distributed_sampler(
-        base_dataset,
-        shuffle=False,
-        drop_last=False,
-    )
-
-    # Use standard collator for eval (no MTP needed)
-    collator = data_collator.DataCollator()
-
-    # Create DataLoader
-    dataloader = torch.utils.data.DataLoader(
-        base_dataset,
-        batch_size=training_config.batch.batch_size,
-        sampler=sampler,
-        collate_fn=collator,
-        num_workers=training_config.data.num_workers,
-        pin_memory=training_config.data.pin_memory,
-        drop_last=False,
-    )
-
-    return dataloader
 
 
 def build_iterable_dataset(
@@ -204,37 +109,3 @@ def build_distributed_sampler(
     )
 
     return sampler
-
-
-def build_dataloader(
-    dataset: torch.utils.data.Dataset,
-    training_config: trainer_configs.TrainingLoopConfig,
-    collator: data_collator.DataCollator,
-    is_train: bool = True,
-) -> torch.utils.data.DataLoader:
-    """Build PyTorch DataLoader with proper settings.
-
-    Args:
-        dataset: Dataset to load from
-        training_config: Training configuration
-        collator: Data collator for batching
-        is_train: Whether this is for training
-
-    Returns:
-        Configured DataLoader
-    """
-    # For IterableDataset, we don't use a sampler
-    sampler = None
-
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=training_config.batch.batch_size,
-        sampler=sampler,
-        collate_fn=collator,
-        num_workers=training_config.data.num_workers,
-        pin_memory=training_config.data.pin_memory,
-        drop_last=is_train,  # Drop last for training, keep for eval
-        persistent_workers=training_config.data.num_workers > 0,
-    )
-
-    return dataloader

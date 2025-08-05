@@ -41,18 +41,18 @@ class PrenormTransformerBlock(transformer.BaseTransformerBlock):
 
     def _apply_residual_connection(
         self,
-        residual: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-        output: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+        residual: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+        output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """Apply residual connection - preserves information and gradients across layers."""
         return residual + output
 
     def _apply_attention_sublayer(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
         attention_mask: typing.Optional[torch.Tensor] = None,
         **kwargs,
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
         Apply pre-norm attention sublayer.
 
@@ -73,8 +73,8 @@ class PrenormTransformerBlock(transformer.BaseTransformerBlock):
 
     def _apply_ffn_sublayer(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
         Apply pre-norm FFN sublayer.
 
@@ -102,10 +102,10 @@ class PrenormTransformerBlock(transformer.BaseTransformerBlock):
 
     def forward(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
         attention_mask: typing.Optional[torch.Tensor] = None,
         **kwargs,
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
         Apply pre-norm transformer block.
 

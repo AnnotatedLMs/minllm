@@ -49,8 +49,8 @@ class KVCache(nn.Module):
     def update(
         self,
         start_pos: int,
-        xk: jaxtyping.Float[torch.Tensor, "batch seq n_kv_heads head_dim"],
-        xv: jaxtyping.Float[torch.Tensor, "batch seq n_kv_heads head_dim"],
+        xk: jaxtyping.Float[torch.Tensor, "batch seq_len n_kv_heads head_dim"],
+        xv: jaxtyping.Float[torch.Tensor, "batch seq_len n_kv_heads head_dim"],
     ) -> typing.Tuple[
         jaxtyping.Float[torch.Tensor, "batch cached_seq n_kv_heads head_dim"],
         jaxtyping.Float[torch.Tensor, "batch cached_seq n_kv_heads head_dim"],

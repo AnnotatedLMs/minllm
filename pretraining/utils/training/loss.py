@@ -2,14 +2,18 @@
 import typing
 
 # Third Party
+import jaxtyping
 import torch
+import torch.nn as nn
 
 # Project
+from pretraining.common.base import inputs
 from pretraining.common.base import outputs
+from pretraining.configs.training import loss_configs
 
 
 class LossHandler:
-    """Handles loss extraction and aggregation from model outputs.
+    """Handles loss computation and aggregation from model outputs.
 
     Model Effects:
     - Provides unified interface for different model architectures
@@ -17,86 +21,190 @@ class LossHandler:
     - Simplifies trainer implementation
 
     Core Operations:
-    - Extracts losses from model training_forward outputs
-    - Aggregates multiple loss components
+    - Computes losses from model logits
+    - Aggregates multiple loss components with configurable weights
     - Tracks individual loss components for logging
 
     Loss Types in LLM Pretraining:
-    - Main loss: Standard cross-entropy for next token prediction
-    - Auxiliary loss (MoE): Load balancing loss to ensure expert utilization
+    - Cross-entropy loss: Standard next token prediction loss
     - MTP losses: Multi-token prediction losses for future tokens
-    - Regularization: Sometimes L2 or other penalties (handled by optimizer)
+    - Auxiliary loss (MoE): Load balancing loss from MoE layers
+    - Z-loss: Optional logit regularization for training stability
     """
 
-    @staticmethod
-    def extract_losses(
-        model_output: outputs.TrainingOutput,
-    ) -> typing.Dict[str, torch.Tensor]:
-        """Extract losses from model output.
-
-        Takes the structured TrainingOutput from model.training_forward() and extracts
-        all loss components into a flat dictionary for aggregation and logging.
+    def __init__(self, loss_config: loss_configs.LossConfig):
+        """Initialize with loss configuration.
 
         Args:
-            model_output: TrainingOutput containing:
-                - loss: Main language modeling loss (cross-entropy) [scalar tensor]
-                - mtp_losses: Optional list of multi-token prediction losses
-                              [list of scalar tensors, one per future position]
-                - aux_losses: Optional list of auxiliary losses (e.g., MoE load balancing)
-                              [list of scalar tensors, one per layer with MoE]
+            loss_config: Configuration with loss weights and options
+        """
+        self.config = loss_config
+
+    def compute_cross_entropy_loss(
+        self,
+        logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"],
+        labels: jaxtyping.Int[torch.Tensor, "batch seq"],
+        ignore_index: int = -100,
+    ) -> torch.Tensor:
+        """Compute cross-entropy loss for language modeling.
+
+        Args:
+            logits: Model output logits [batch, seq, vocab]
+            labels: Target token indices [batch, seq]
+            ignore_index: Index to ignore in loss computation
 
         Returns:
-            Dictionary mapping loss names to tensors:
-                - "loss": Main LM loss
-                - "mtp_loss_1", "mtp_loss_2", etc.: Individual MTP losses by position
-                - "aux_loss": Sum of all auxiliary losses (for MoE load balancing)
+            Cross-entropy loss (scalar tensor)
+        """
+        # Shift for next-token prediction
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+
+        # Flatten for loss computation
+        shift_logits = shift_logits.view(-1, shift_logits.size(-1))
+        shift_labels = shift_labels.view(-1)
+
+        # Compute loss
+        if self.config.use_fused_loss:
+            # TODO: Use fused cross-entropy from flash-attn if available
+            loss = nn.functional.cross_entropy(
+                shift_logits, shift_labels, ignore_index=ignore_index
+            )
+        else:
+            loss = nn.functional.cross_entropy(
+                shift_logits, shift_labels, ignore_index=ignore_index
+            )
+
+        return loss
+
+    def compute_z_loss(
+        self,
+        logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"],
+    ) -> torch.Tensor:
+        """Compute z-loss for training stability (from OLMo).
+
+        Z-loss encourages logits to stay close to zero, improving stability.
+
+        Args:
+            logits: Model output logits [batch, seq, vocab]
+
+        Returns:
+            Z-loss (scalar tensor)
+        """
+        # Z-loss is the squared norm of logits
+        z_loss = torch.square(logits).mean()
+        return z_loss
+
+    def compute_mtp_losses(
+        self,
+        mtp_logits: typing.List[jaxtyping.Float[torch.Tensor, "batch seq vocab"]],
+        mtp_targets: jaxtyping.Int[torch.Tensor, "batch depth seq"],
+        ignore_index: int = -100,
+    ) -> typing.List[torch.Tensor]:
+        """Compute multi-token prediction losses.
+
+        Args:
+            mtp_logits: List of logits for each future position
+            mtp_targets: Target tokens for each depth [batch, depth, seq]
+            ignore_index: Index to ignore in loss
+
+        Returns:
+            List of MTP losses for each depth
+        """
+        mtp_losses = []
+
+        for d, depth_logits in enumerate(mtp_logits):
+            if d < mtp_targets.shape[1]:
+                # Get targets for this depth
+                depth_targets = mtp_targets[:, d, :]
+
+                # Flatten for loss computation
+                depth_logits_flat = depth_logits.reshape(-1, depth_logits.size(-1))
+                depth_targets_flat = depth_targets.reshape(-1)
+
+                # Compute loss for this depth
+                depth_loss = nn.functional.cross_entropy(
+                    depth_logits_flat, depth_targets_flat, ignore_index=ignore_index
+                )
+                mtp_losses.append(depth_loss)
+
+        return mtp_losses
+
+    def compute_losses(
+        self,
+        model_output: outputs.ForwardOutput,
+        training_inputs: inputs.TrainingInputs,
+    ) -> typing.Dict[str, torch.Tensor]:
+        """Compute all losses from model output and inputs.
+
+        Args:
+            model_output: ForwardOutput containing logits, mtp_logits, and aux losses
+            training_inputs: TrainingInputs containing labels and targets
+
+        Returns:
+            Dictionary mapping loss names to tensors
         """
         losses = {}
-        losses["loss"] = model_output.loss
 
-        # Add MTP losses if present
-        if model_output.mtp_losses:
-            for i, mtp_loss in enumerate(model_output.mtp_losses):
+        # Compute cross-entropy loss from main logits
+        losses["cross_entropy"] = self.compute_cross_entropy_loss(
+            model_output.logits,
+            training_inputs.labels,
+            ignore_index=self.config.ignore_index,
+        )
+
+        # Compute z-loss if enabled
+        if self.config.z_loss_weight is not None and self.config.z_loss_weight > 0:
+            losses["z_loss"] = self.compute_z_loss(model_output.logits)
+
+        # Compute MTP losses if present
+        if model_output.mtp_logits is not None and training_inputs.mtp_targets is not None:
+            mtp_losses = self.compute_mtp_losses(
+                model_output.mtp_logits,
+                training_inputs.mtp_targets,
+                ignore_index=self.config.ignore_index,
+            )
+            # Store individual MTP losses for logging
+            for i, mtp_loss in enumerate(mtp_losses):
                 losses[f"mtp_loss_{i + 1}"] = mtp_loss
 
         # Add auxiliary losses if present
         if model_output.aux_losses:
-            # Sum all auxiliary losses
+            # Sum all auxiliary losses from MoE
             losses["aux_loss"] = sum(model_output.aux_losses)
 
         return losses
 
-    @staticmethod
     def aggregate_losses(
+        self,
         losses: typing.Dict[str, torch.Tensor],
-        weights: typing.Optional[typing.Dict[str, float]] = None,
     ) -> torch.Tensor:
         """Aggregate multiple losses into single training loss.
 
         Args:
             losses: Dictionary of loss components
-            weights: Optional weights for each loss component
 
         Returns:
             Aggregated loss for backpropagation
         """
-        if weights is None:
-            weights = {}
+        total_loss = torch.tensor(0.0, device=next(iter(losses.values())).device)
 
-        # Default weights
-        default_weights = {
-            "loss": 1.0,
-            "aux_loss": 0.01,  # MoE auxiliary loss weight
-            "mtp_loss_1": 0.65,  # MTP weights from DeepSeek paper
-            "mtp_loss_2": 0.2,
-            "mtp_loss_3": 0.15,
-        }
+        # Apply weights from config
+        if "cross_entropy" in losses:
+            total_loss = total_loss + self.config.cross_entropy_weight * losses["cross_entropy"]
 
-        total_loss = torch.tensor(0.0, device=losses["loss"].device)
+        if "z_loss" in losses and self.config.z_loss_weight is not None:
+            total_loss = total_loss + self.config.z_loss_weight * losses["z_loss"]
 
-        for name, loss_tensor in losses.items():
-            weight = weights.get(name, default_weights.get(name, 1.0))
-            total_loss = total_loss + weight * loss_tensor
+        if "aux_loss" in losses and self.config.moe_aux_loss_weight is not None:
+            total_loss = total_loss + self.config.moe_aux_loss_weight * losses["aux_loss"]
+
+        # Apply MTP weight to averaged MTP losses
+        mtp_losses = [losses[k] for k in losses if k.startswith("mtp_loss_")]
+        if mtp_losses and self.config.mtp_loss_weight is not None:
+            # Average MTP losses as per DeepSeek-V3 paper
+            avg_mtp_loss = sum(mtp_losses) / len(mtp_losses)
+            total_loss = total_loss + self.config.mtp_loss_weight * avg_mtp_loss
 
         return total_loss
 

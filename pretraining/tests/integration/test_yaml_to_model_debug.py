@@ -2,8 +2,6 @@
 import pathlib
 
 # Third Party
-import jaxtyping
-import pytest
 import torch
 
 # Project
@@ -39,11 +37,6 @@ class TestYAMLToModelDebug:
     • Ensures all debug models have <1M parameters for fast testing
     """
 
-    @pytest.fixture
-    def debug_configs_dir(self) -> pathlib.Path:
-        """Path to debug configs."""
-        return pathlib.Path(__file__).parent.parent.parent / "configs" / "examples" / "debug"
-
     def test_gpt2_debug_yaml_to_model(self, debug_configs_dir: pathlib.Path) -> None:
         """Test GPT-2 debug YAML loads and creates working model."""
         config_path = debug_configs_dir / "gpt2_debug.yaml"
@@ -61,12 +54,13 @@ class TestYAMLToModelDebug:
         batch_size, seq_len = 2, 32
         input_ids = torch.randint(0, config.llm.transformer.vocab_size, (batch_size, seq_len))
 
-        output: jaxtyping.Float[torch.Tensor, "batch seq vocab"] = model.inference_forward(
-            input_ids
-        )
+        # Put model in eval mode and forward
+        model.eval()
+        with torch.no_grad():
+            output = model.forward(input_ids=input_ids)
 
         # Check output shape
-        assert output.shape == (batch_size, seq_len, config.llm.transformer.vocab_size)
+        assert output.logits.shape == (batch_size, seq_len, config.llm.transformer.vocab_size)
 
         # Verify position embeddings exist
         assert hasattr(model, "position_embeddings")
@@ -89,12 +83,13 @@ class TestYAMLToModelDebug:
         batch_size, seq_len = 1, 32
         input_ids = torch.randint(0, config.llm.transformer.vocab_size, (batch_size, seq_len))
 
-        output: jaxtyping.Float[torch.Tensor, "batch seq vocab"] = model.inference_forward(
-            input_ids
-        )
+        # Put model in eval mode and forward
+        model.eval()
+        with torch.no_grad():
+            output = model.forward(input_ids=input_ids)
 
         # Check output shape
-        assert output.shape == (batch_size, seq_len, config.llm.transformer.vocab_size)
+        assert output.logits.shape == (batch_size, seq_len, config.llm.transformer.vocab_size)
 
         # Verify no position embeddings
         assert not hasattr(model, "position_embeddings")
@@ -121,12 +116,14 @@ class TestYAMLToModelDebug:
         input_ids = torch.randint(0, config.llm.transformer.vocab_size, (batch_size, seq_len))
 
         # Test inference forward (no MTP outputs in inference mode)
-        logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"] = model.inference_forward(
-            input_ids
-        )
+        model.eval()
+        with torch.no_grad():
+            output = model.forward(input_ids=input_ids)
 
         # Check output shape
-        assert logits.shape == (batch_size, seq_len, config.llm.transformer.vocab_size)
+        assert output.logits.shape == (batch_size, seq_len, config.llm.transformer.vocab_size)
+        # In eval mode, MTP logits should not be computed
+        assert output.mtp_logits is None
 
         # Verify MoE is configured
         assert hasattr(model.blocks[0], "moe")

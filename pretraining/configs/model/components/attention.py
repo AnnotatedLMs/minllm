@@ -9,7 +9,6 @@ class BaseAttentionConfig(base.BaseConfig):
     """Base configuration for all attention mechanisms."""
 
     num_heads: int
-    dropout: float
     bias: bool
     max_seq_length: int  # For GPT-2 style pre-computed bias
     is_causal: bool

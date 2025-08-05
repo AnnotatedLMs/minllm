@@ -88,7 +88,7 @@ class MultiHeadLatentAttention(base.Attention):
 
     def _compress_inputs(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
     ) -> typing.Tuple[
         jaxtyping.Float[torch.Tensor, "batch seq kv_compress_dim"],
         jaxtyping.Float[torch.Tensor, "batch seq q_compress_dim"],
@@ -118,7 +118,7 @@ class MultiHeadLatentAttention(base.Attention):
     ]:
         """Project compressed KV to keys, values, and RoPE components."""
         # Project to content keys
-        keys_content: jaxtyping.Float[torch.Tensor, "batch seq n_heads*head_dim"]
+        keys_content: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads*head_dim"]
         keys_content = self.key_up(kv_compressed)
 
         keys_content_heads: jaxtyping.Float[torch.Tensor, "batch n_heads seq head_dim"]
@@ -126,7 +126,7 @@ class MultiHeadLatentAttention(base.Attention):
         keys_content_heads = keys_content_heads.transpose(1, 2)
 
         # Project to values
-        values: jaxtyping.Float[torch.Tensor, "batch seq n_heads*head_dim"]
+        values: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads*head_dim"]
         values = self.value_up(kv_compressed)
 
         values_heads: jaxtyping.Float[torch.Tensor, "batch n_heads seq head_dim"]
@@ -134,7 +134,7 @@ class MultiHeadLatentAttention(base.Attention):
         values_heads = values_heads.transpose(1, 2)
 
         # Project to RoPE keys
-        keys_rope: jaxtyping.Float[torch.Tensor, "batch seq n_heads*rope_dim"]
+        keys_rope: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads*rope_dim"]
         keys_rope = self.key_rope(kv_compressed)
 
         keys_rope_heads: jaxtyping.Float[torch.Tensor, "batch n_heads seq rope_dim"]
@@ -154,7 +154,7 @@ class MultiHeadLatentAttention(base.Attention):
     ]:
         """Project compressed queries to content and RoPE components."""
         # Project to content queries
-        queries_content: jaxtyping.Float[torch.Tensor, "batch seq n_heads*head_dim"]
+        queries_content: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads*head_dim"]
         queries_content = self.query_up(query_compressed)
 
         queries_content_heads: jaxtyping.Float[torch.Tensor, "batch n_heads seq head_dim"]
@@ -164,7 +164,7 @@ class MultiHeadLatentAttention(base.Attention):
         queries_content_heads = queries_content_heads.transpose(1, 2)
 
         # Project to RoPE queries
-        queries_rope: jaxtyping.Float[torch.Tensor, "batch seq n_heads*rope_dim"]
+        queries_rope: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads*rope_dim"]
         queries_rope = self.query_rope(query_compressed)
 
         queries_rope_heads: jaxtyping.Float[torch.Tensor, "batch n_heads seq rope_dim"]
@@ -192,7 +192,7 @@ class MultiHeadLatentAttention(base.Attention):
     def _merge_heads(
         self,
         x: jaxtyping.Float[torch.Tensor, "batch n_heads seq head_dim"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq n_heads*head_dim"]:
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len n_heads*head_dim"]:
         """
         Merge attention heads back to single tensor.
 
@@ -202,31 +202,31 @@ class MultiHeadLatentAttention(base.Attention):
         batch_size, num_heads, seq_len, head_dim = x.shape
 
         # Transpose heads and sequence dimensions
-        x_transposed: jaxtyping.Float[torch.Tensor, "batch seq n_heads head_dim"]
+        x_transposed: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads head_dim"]
         x_transposed = x.transpose(1, 2).contiguous()
 
         # Reshape to combine heads
-        x_merged: jaxtyping.Float[torch.Tensor, "batch seq n_heads*head_dim"]
+        x_merged: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads*head_dim"]
         x_merged = x_transposed.view(batch_size, seq_len, self.num_heads * self.head_dim)
 
         return x_merged
 
     def _apply_output_projection(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq n_heads*head_dim"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads*head_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """Apply output projection to map back to model dimension."""
-        output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         output = self.output_proj(x)
         return output
 
     def forward(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
         attention_mask: typing.Optional[torch.Tensor] = None,
         position_offset: int = 0,
         **kwargs,
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
         Apply Multi-head Latent Attention.
 
@@ -280,10 +280,10 @@ class MultiHeadLatentAttention(base.Attention):
         # Always use manual attention regardless of config
         attn_output = self._compute_manual_attention(queries, keys, values, attention_mask)
 
-        merged: jaxtyping.Float[torch.Tensor, "batch seq n_heads*head_dim"]
+        merged: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads*head_dim"]
         merged = self._merge_heads(attn_output)
 
-        output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         output = self._apply_output_projection(merged)
 
         return output

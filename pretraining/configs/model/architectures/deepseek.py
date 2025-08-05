@@ -3,6 +3,7 @@ import pydantic
 import yaml
 
 # Project
+from pretraining.configs.model import transformer
 from pretraining.configs.model.architectures import base
 from pretraining.configs.model.components import attention
 from pretraining.configs.model.components import heads
@@ -12,6 +13,9 @@ from pretraining.configs.model.components import position
 
 class DeepSeek3Config(base.BaseLLMConfig):
     """Configuration for DeepSeek-V3 architecture."""
+
+    # Override with DeepSeek 3 specific transformer config
+    transformer: transformer.DeepSeek3TransformerConfig
 
     # Multi-token prediction heads (predicts multiple future tokens)
     mtp: heads.MultiTokenPredictionConfig
@@ -68,5 +72,11 @@ class DeepSeek3Config(base.BaseLLMConfig):
 
         # Parse RoPE config
         trans_dict["rope"] = position.RoPEConfig(**trans_dict["rope"])
+
+        # Parse MTP config
+        model_dict["mtp"] = heads.MultiTokenPredictionConfig(**model_dict["mtp"])
+
+        # Create DeepSeek3TransformerConfig
+        model_dict["transformer"] = transformer.DeepSeek3TransformerConfig(**trans_dict)
 
         return cls(**model_dict)

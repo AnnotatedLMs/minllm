@@ -37,7 +37,7 @@ class TrainingState(base.BaseConfig):
 
     # Training config (set during init)
     max_iterations: typing.Optional[int] = None
-    max_tokens: typing.Optional[int] = None
+    token_budget: typing.Optional[int] = None
     eval_interval: int = 1000
     checkpoint_interval: int = 5000
     log_interval: int = 10
@@ -71,12 +71,12 @@ class TrainingState(base.BaseConfig):
         """Check if training should stop.
 
         Stops when:
+        - Reached token budget (if set)
         - Reached max iterations (if set)
-        - Reached max tokens (if set)
         """
-        if self.max_iterations and self.iteration >= self.max_iterations:
+        if self.token_budget and self.tokens_seen >= self.token_budget:
             return True
-        if self.max_tokens and self.tokens_seen >= self.max_tokens:
+        if self.max_iterations and self.iteration >= self.max_iterations:
             return True
         return False
 

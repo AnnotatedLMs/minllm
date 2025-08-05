@@ -78,8 +78,8 @@ class MultiplicativeGatedFFN(base.FeedForward):
 
     def _compute_gate(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq intermediate"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]:
         """
         Compute gating values with activation.
 
@@ -87,57 +87,57 @@ class MultiplicativeGatedFFN(base.FeedForward):
         learning input-dependent filtering.
         """
         # Linear projection
-        gate_pre_activation: jaxtyping.Float[torch.Tensor, "batch seq intermediate"]
+        gate_pre_activation: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]
         gate_pre_activation = self.gate_proj(x)
 
         # Apply activation (SiLU for SwiGLU)
-        gate: jaxtyping.Float[torch.Tensor, "batch seq intermediate"]
+        gate: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]
         gate = self.activation(gate_pre_activation)
 
         return gate
 
     def _compute_up_projection(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq intermediate"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]:
         """
         Compute up projection (no activation).
 
         This is the actual information to be gated,
         representing the features to be selectively passed.
         """
-        up: jaxtyping.Float[torch.Tensor, "batch seq intermediate"]
+        up: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]
         up = self.up_proj(x)
         return up
 
     def _apply_gating(
         self,
-        gate: jaxtyping.Float[torch.Tensor, "batch seq intermediate"],
-        up: jaxtyping.Float[torch.Tensor, "batch seq intermediate"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq intermediate"]:
+        gate: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"],
+        up: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]:
         """
         Apply multiplicative gating.
 
         Element-wise multiplication allows the gate to control
         information flow dynamically, learning which features to emphasize.
         """
-        gated: jaxtyping.Float[torch.Tensor, "batch seq intermediate"]
+        gated: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]
         gated = gate * up
         return gated
 
     def _compute_down_projection(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq intermediate"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """Project back to model dimension."""
-        down: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        down: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         down = self.down_proj(x)
         return down
 
     def forward(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
         Apply SwiGLU-style gated feedforward.
 
@@ -150,18 +150,18 @@ class MultiplicativeGatedFFN(base.FeedForward):
 
         The gating allows the model to dynamically control information flow based on content.
         """
-        gate: jaxtyping.Float[torch.Tensor, "batch seq intermediate"]
+        gate: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]
         gate = self._compute_gate(x)
 
-        up: jaxtyping.Float[torch.Tensor, "batch seq intermediate"]
+        up: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]
         up = self._compute_up_projection(x)
 
-        gated: jaxtyping.Float[torch.Tensor, "batch seq intermediate"]
+        gated: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]
         gated = self._apply_gating(gate, up)
 
-        output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         output = self._compute_down_projection(gated)
 
-        output = self.dropout_layer(output) if self.dropout > 0 else output
+        output = self._maybe_apply_dropout(output, self.ffn_dropout)
 
         return output

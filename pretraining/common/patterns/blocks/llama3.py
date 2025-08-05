@@ -39,7 +39,6 @@ class Llama3TransformerBlock(prenorm.PrenormTransformerBlock):
         num_heads: int,
         num_kv_heads: int,
         rope_module: rope.RoPE,
-        dropout: float = 0.0,
         norm_eps: float = 1e-5,
         ffn_dim_multiplier: typing.Optional[float] = None,
         multiple_of: int = 256,
@@ -57,7 +56,6 @@ class Llama3TransformerBlock(prenorm.PrenormTransformerBlock):
             num_heads=num_heads,
             num_kv_heads=num_kv_heads,
             rope_module=rope_module,
-            dropout=dropout,
             bias=False,  # No bias in Llama
             is_causal=True,
             use_flash_attention=use_flash_attention,
@@ -66,7 +64,6 @@ class Llama3TransformerBlock(prenorm.PrenormTransformerBlock):
         # SwiGLU FFN
         self.ffn = gated.MultiplicativeGatedFFN(
             hidden_dim=hidden_dim,
-            dropout=dropout,
             activation="silu",  # SwiGLU uses SiLU
             bias=False,  # No bias in Llama
             ffn_dim_multiplier=ffn_dim_multiplier,

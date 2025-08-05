@@ -10,7 +10,6 @@ class TokenEmbeddingConfig(base.BaseConfig):
 
     vocab_size: int = pydantic.Field(gt=0, description="Vocabulary size")
     embedding_dim: int = pydantic.Field(gt=0, description="Embedding dimension")
-    embedding_dropout: float = pydantic.Field(ge=0, lt=1, description="Dropout rate for embeddings")
 
     # Embedding initialization
     init_std: float = pydantic.Field(

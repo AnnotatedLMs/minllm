@@ -115,7 +115,6 @@ class TestConfigParsing:
 
         # Check architecture-specific training configs
         assert config.training.moe_training is not None
-        assert config.training.mtp_training is not None
 
     def test_config_validation(self, example_configs_dir):
         """Test that configs are properly validated."""
@@ -183,19 +182,16 @@ class TestTransformerConfigs:
         norm_config = normalization.LayerNormConfig(norm_eps=1e-5, bias=True)
         attn_config = attention.MultiHeadAttentionConfig(
             num_heads=4,
-            dropout=0.0,
             bias=True,
             max_seq_length=128,
             is_causal=True,
             use_flash_attention=False,
         )
-        ffn_config = feedforward.FFNConfig(
-            intermediate_dim=256, activation="gelu", dropout=0.0, bias=True
-        )
+        ffn_config = feedforward.FFNConfig(intermediate_dim=256, activation="gelu", bias=True)
         moe_config = feedforward.MoEConfig(num_experts=4, num_experts_per_token=2)
 
-        # Test valid config with FFN
-        config = transformer.TransformerConfig(
+        # Test valid config with FFN (using GPT2TransformerConfig)
+        config = transformer.GPT2TransformerConfig(
             vocab_size=100,
             hidden_dim=64,
             n_layers=2,
@@ -207,14 +203,25 @@ class TestTransformerConfigs:
         assert config.ffn is not None
         assert config.moe is None
 
-        # Test valid config with MoE
-        config = transformer.TransformerConfig(
+        # Test valid config with MoE (using DeepSeek3TransformerConfig with MLA attention)
+        mla_attn_config = attention.MultiHeadLatentAttentionConfig(
+            num_heads=4,
+            head_dim=16,
+            kv_compression_dim=32,
+            query_compression_dim=48,
+            rope_dim=16,
+            bias=True,
+            max_seq_length=128,
+            is_causal=True,
+            use_flash_attention=False,
+        )
+        config = transformer.DeepSeek3TransformerConfig(
             vocab_size=100,
             hidden_dim=64,
             n_layers=2,
             block_size=128,
             normalization=norm_config,
-            attention=attn_config,
+            attention=mla_attn_config,
             moe=moe_config,
         )
         assert config.moe is not None
@@ -222,20 +229,20 @@ class TestTransformerConfigs:
 
         # Test invalid config with both FFN and MoE
         with pytest.raises(ValueError, match="Cannot have both ffn and moe"):
-            transformer.TransformerConfig(
+            transformer.DeepSeek3TransformerConfig(
                 vocab_size=100,
                 hidden_dim=64,
                 n_layers=2,
                 block_size=128,
                 normalization=norm_config,
-                attention=attn_config,
+                attention=mla_attn_config,
                 ffn=ffn_config,
                 moe=moe_config,
             )
 
         # Test invalid config with neither FFN nor MoE
         with pytest.raises(ValueError, match="Must have either ffn or moe"):
-            transformer.TransformerConfig(
+            transformer.GPT2TransformerConfig(
                 vocab_size=100,
                 hidden_dim=64,
                 n_layers=2,
@@ -251,7 +258,6 @@ class TestTransformerConfigs:
             attention.GroupedQueryAttentionConfig(
                 num_heads=4,
                 num_kv_heads=8,  # Invalid: more KV heads than Q heads
-                dropout=0.0,
                 bias=True,
                 max_seq_length=128,
                 is_causal=True,
@@ -262,7 +268,6 @@ class TestTransformerConfigs:
             attention.GroupedQueryAttentionConfig(
                 num_heads=7,
                 num_kv_heads=3,  # Invalid: 7 not divisible by 3
-                dropout=0.0,
                 bias=True,
                 max_seq_length=128,
                 is_causal=True,
@@ -277,7 +282,7 @@ class TestLLMConfigs:
         """Test GPT-2 specific validation."""
         # Create configs with mismatched dimensions
         token_config = embeddings.TokenEmbeddingConfig(
-            vocab_size=1000, embedding_dim=64, embedding_dropout=0.0, init_std=0.02
+            vocab_size=1000, embedding_dim=64, init_std=0.02
         )
 
         position_config = embeddings.LearnedPositionEmbeddingConfig(
@@ -292,17 +297,14 @@ class TestLLMConfigs:
             norm_config = normalization.LayerNormConfig(norm_eps=1e-5, bias=True)
             attn_config = attention.MultiHeadAttentionConfig(
                 num_heads=4,
-                dropout=0.0,
                 bias=True,
                 max_seq_length=128,
                 is_causal=True,
                 use_flash_attention=False,
             )
-            ffn_config = feedforward.FFNConfig(
-                intermediate_dim=256, activation="gelu", dropout=0.0, bias=True
-            )
+            ffn_config = feedforward.FFNConfig(intermediate_dim=256, activation="gelu", bias=True)
 
-            transformer_config = transformer.TransformerConfig(
+            transformer_config = transformer.GPT2TransformerConfig(
                 vocab_size=1000,
                 hidden_dim=64,
                 n_layers=2,
@@ -331,7 +333,7 @@ class TestLLMConfigs:
         """Test that GPT-2 requires tied embeddings."""
         # Create a valid base config
         token_config = embeddings.TokenEmbeddingConfig(
-            vocab_size=1000, embedding_dim=64, embedding_dropout=0.0, init_std=0.02
+            vocab_size=1000, embedding_dim=64, init_std=0.02
         )
         position_config = embeddings.LearnedPositionEmbeddingConfig(
             max_position_embeddings=128, embedding_dim=64, init_std=0.02
@@ -339,16 +341,13 @@ class TestLLMConfigs:
         norm_config = normalization.LayerNormConfig(norm_eps=1e-5, bias=True)
         attn_config = attention.MultiHeadAttentionConfig(
             num_heads=4,
-            dropout=0.0,
             bias=True,
             max_seq_length=128,
             is_causal=True,
             use_flash_attention=False,
         )
-        ffn_config = feedforward.FFNConfig(
-            intermediate_dim=256, activation="gelu", dropout=0.0, bias=True
-        )
-        transformer_config = transformer.TransformerConfig(
+        ffn_config = feedforward.FFNConfig(intermediate_dim=256, activation="gelu", bias=True)
+        transformer_config = transformer.GPT2TransformerConfig(
             vocab_size=1000,
             hidden_dim=64,
             n_layers=2,

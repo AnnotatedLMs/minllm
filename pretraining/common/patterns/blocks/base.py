@@ -34,10 +34,10 @@ class TransformerBlock(transformer.BaseTransformerBlock):
 
     def _apply_residual_connection(
         self,
-        residual: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-        output: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+        residual: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+        output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """Apply residual connection - preserves information and gradients across layers."""
-        combined: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        combined: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         combined = residual + output
         return combined

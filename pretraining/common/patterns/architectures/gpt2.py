@@ -7,13 +7,12 @@ import torch
 import torch.nn as nn
 
 # Project
-from pretraining.common.base import inputs
 from pretraining.common.base import llm
 from pretraining.common.base import outputs
 from pretraining.common.patterns.blocks import gpt2 as gpt2_blocks
 from pretraining.common.patterns.position import learned
-from pretraining.configs.model import initialization
 from pretraining.configs.model.architectures import gpt
+from pretraining.utils import weight_init
 
 
 class GPT2(llm.BaseLLM):
@@ -42,14 +41,12 @@ class GPT2(llm.BaseLLM):
         hidden_dim: int,
         n_layers: int,
         block_size: int,
-        # Token embedding params
-        embedding_dropout: float = 0.0,
         # Position embedding params
         max_position_embeddings: int = 1024,
         position_init_std: float = 0.02,
         # Transformer params
         num_heads: int = 12,
-        dropout: float = 0.0,
+        dropout: typing.Optional[float] = None,
         norm_eps: float = 1e-5,
         use_flash_attention: bool = False,
         # Weight init params
@@ -61,10 +58,9 @@ class GPT2(llm.BaseLLM):
 
         Args:
             vocab_size: Size of vocabulary
-            hidden_dim: Hidden dimension (d_model)
+            hidden_dim: Hidden dimension (hidden_dim)
             n_layers: Number of transformer layers
             block_size: Maximum sequence length
-            embedding_dropout: Dropout for embeddings
             max_position_embeddings: Maximum position embeddings
             position_init_std: Std dev for position embedding init
             num_heads: Number of attention heads
@@ -95,7 +91,7 @@ class GPT2(llm.BaseLLM):
             init_std=position_init_std,
         )
 
-        self.embed_dropout = nn.Dropout(embedding_dropout)
+        self.embedding_dropout = nn.Dropout(dropout) if dropout is not None else None
 
         # Transformer blocks
         self.blocks: nn.ModuleList[gpt2_blocks.GPT2TransformerBlock] = nn.ModuleList(
@@ -115,17 +111,16 @@ class GPT2(llm.BaseLLM):
         # Final layer norm
         self.ln_f = nn.LayerNorm(hidden_dim, eps=norm_eps, elementwise_affine=True)
 
-        # Output projection - tied with token embeddings
+        # Weight tying: Output projection shares weights with input embeddings
+        # This means the same matrix is used for both token→embedding and hidden→logits
+        # Saves parameters (50M+ for large vocabs) and improves training efficiency
         self.lm_head = self.token_embeddings
 
-        # Apply GPT-2 weight initialization
-        weight_init_config = initialization.GPT2InitConfig(
+        self._apply_weight_initialization(
             std=weight_init_std,
             residual_pattern=residual_pattern,
             position_init_std=position_init_std,
         )
-        minimal_config = type("Config", (), {"weight_init": weight_init_config})()
-        self._apply_weight_initialization(minimal_config)
 
     @classmethod
     def from_config(cls, config: gpt.GPT2Config) -> "GPT2":
@@ -136,8 +131,6 @@ class GPT2(llm.BaseLLM):
             hidden_dim=config.transformer.hidden_dim,
             n_layers=config.transformer.n_layers,
             block_size=config.transformer.block_size,
-            # Token embedding params
-            embedding_dropout=config.token_embedding.embedding_dropout,
             # Position embedding params
             max_position_embeddings=config.position_embedding.max_position_embeddings,
             position_init_std=config.position_embedding.init_std,
@@ -156,7 +149,7 @@ class GPT2(llm.BaseLLM):
         batch_size: int,
         seq_len: int,
         device: torch.device,
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]:
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """Generate position embeddings for the sequence."""
         # Create position indices
         position_ids: jaxtyping.Int[torch.Tensor, "seq"]
@@ -167,40 +160,36 @@ class GPT2(llm.BaseLLM):
         position_ids_expanded = position_ids.unsqueeze(0).expand(batch_size, -1)
 
         # Get position embeddings
-        pos_embeds: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
+        pos_embeds: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         pos_embeds = self.position_embeddings(position_ids_expanded)
 
         return pos_embeds
 
     def _combine_embeddings(
         self,
-        token_embeds: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-        pos_embeds: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]:
+        token_embeds: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+        pos_embeds: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """Combine token and position embeddings."""
-        combined: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
+        combined: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         combined = token_embeds + pos_embeds
-
-        # Apply dropout
-        combined = self.embed_dropout(combined)
-
         return combined
 
     def _apply_transformer_blocks(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
         attention_mask: typing.Optional[torch.Tensor] = None,
         output_hidden_states: bool = False,
     ) -> typing.Tuple[
-        jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-        typing.Optional[typing.List[jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]]],
+        jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+        typing.Optional[typing.List[jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]]],
     ]:
         """Pass input through all transformer blocks."""
         # Store hidden states if requested
         all_hidden_states = [] if output_hidden_states else None
 
         # Process through each block
-        hidden: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"] = x
+        hidden: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"] = x
         for block in self.blocks:
             if output_hidden_states:
                 all_hidden_states.append(hidden)
@@ -209,7 +198,7 @@ class GPT2(llm.BaseLLM):
             hidden = block(hidden, attention_mask=attention_mask)
 
         # Apply final layer norm
-        normalized: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
+        normalized: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         normalized = self.ln_f(hidden)
 
         if output_hidden_states:
@@ -219,12 +208,12 @@ class GPT2(llm.BaseLLM):
 
     def _compute_logits(
         self,
-        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
+        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len vocab"]:
         """Compute output logits from hidden states."""
         if hasattr(self.lm_head, "weight"):
             # Tied embeddings case - use embedding weights transposed
-            logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"]
+            logits: jaxtyping.Float[torch.Tensor, "batch seq_len vocab"]
             logits = torch.matmul(hidden_states, self.lm_head.weight.T)
         else:
             # Separate projection case
@@ -232,33 +221,32 @@ class GPT2(llm.BaseLLM):
 
         return logits
 
-    def compute_loss(
+    def _apply_weight_initialization(
         self,
-        logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"],
-        targets: jaxtyping.Int[torch.Tensor, "batch seq"],
-        ignore_index: int = -100,
-        **kwargs,
-    ) -> torch.Tensor:
-        """Compute cross-entropy loss for language modeling."""
-        # Shift for next-token prediction
-        shift_logits: jaxtyping.Float[torch.Tensor, "batch seq_minus_1 vocab"]
-        shift_logits = logits[..., :-1, :].contiguous()
+        std: float,
+        residual_pattern: str,
+        position_init_std: float,
+    ) -> None:
+        """Apply GPT-2 specific weight initialization.
 
-        shift_labels: jaxtyping.Int[torch.Tensor, "batch seq_minus_1"]
-        shift_labels = targets[..., 1:].contiguous()
+        Args:
+            std: Standard deviation for general weight init
+            residual_pattern: Pattern to identify residual connections
+            position_init_std: Standard deviation for position embedding init
+        """
 
-        # Flatten for loss computation
-        flat_logits: jaxtyping.Float[torch.Tensor, "batch_x_seq vocab"]
-        flat_logits = shift_logits.view(-1, shift_logits.size(-1))
+        # Create and apply initializer
+        initializer = weight_init.TransformerWeightInitializer(
+            n_layer=self.n_layers,
+            std=std,
+            residual_pattern=residual_pattern,
+        )
+        initializer.initialize(self)
 
-        flat_labels: jaxtyping.Int[torch.Tensor, "batch_x_seq"]
-        flat_labels = shift_labels.view(-1)
-
-        # Compute loss
-        loss: torch.Tensor
-        loss = nn.functional.cross_entropy(flat_logits, flat_labels, ignore_index=ignore_index)
-
-        return loss
+        # GPT-2 specific: Initialize position embeddings separately
+        if hasattr(self, "position_embeddings") and self.position_embeddings is not None:
+            # Position embeddings use different initialization
+            nn.init.normal_(self.position_embeddings.wpe.weight, std=position_init_std)
 
     @torch.no_grad()
     def generate(
@@ -289,7 +277,11 @@ class GPT2(llm.BaseLLM):
             idx_cond = idx if idx.size(1) <= self.block_size else idx[:, -self.block_size :]
 
             # Forward the model to get logits
-            logits = self.inference_forward(idx_cond, **kwargs)
+            model_output = self.forward(
+                input_ids=idx_cond,
+                attention_mask=kwargs.get("attention_mask"),
+            )
+            logits = model_output.logits
 
             # Focus on the last token logits
             logits = logits[:, -1, :] / temperature
@@ -310,103 +302,43 @@ class GPT2(llm.BaseLLM):
 
         return idx
 
-    def training_forward(
+    def forward(
         self,
-        training_inputs: inputs.TrainingInputs,
-    ) -> outputs.TrainingOutput:
+        input_ids: jaxtyping.Int[torch.Tensor, "batch seq"],
+        attention_mask: typing.Optional[torch.Tensor] = None,
+    ) -> outputs.ForwardOutput:
         """
-        Forward pass for training.
+        Unified forward pass for both training and inference.
 
         Args:
-            training_inputs: TrainingInputs containing:
-                - input_ids: Input token indices [batch, seq]
-                - labels: Target tokens for loss computation
-                - attention_mask: Optional attention mask
-                - mtp_targets: Not used for GPT2
+            input_ids: Input token indices [batch, seq]
+            attention_mask: Optional attention mask
 
         Returns:
-            TrainingOutput containing:
-                - loss: Cross-entropy loss for next-token prediction
+            ForwardOutput containing logits
         """
-        batch_size, seq_len = training_inputs.input_ids.shape
-        device = training_inputs.input_ids.device
+        batch_size, seq_len = input_ids.shape
+        device = input_ids.device
 
-        # 1. Embed tokens
-        token_embeds: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        token_embeds = self.token_embeddings(training_inputs.input_ids)
+        # 1. Token embeddings
+        token_embeds: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
+        token_embeds = self.token_embeddings(input_ids)
 
-        # 2. Get position embeddings
+        # 2. Position embeddings
         pos_embeds = self._get_position_embeddings(batch_size, seq_len, device)
 
         # 3. Combine embeddings with dropout
+        # Note: PyTorch's Dropout automatically handles train/eval mode
         x = self._combine_embeddings(token_embeds, pos_embeds)
-
-        # 4. Apply transformer blocks
-        hidden_states, all_hidden_states = self._apply_transformer_blocks(
-            x, attention_mask=training_inputs.attention_mask, output_hidden_states=False
-        )
-
-        # 5. Compute logits
-        logits = self._compute_logits(hidden_states)
-
-        # 6. Compute loss
-        loss = self.compute_loss(logits, training_inputs.labels)
-
-        return outputs.TrainingOutput(loss=loss)
-
-    @torch.no_grad()
-    def inference_forward(
-        self,
-        inference_inputs: inputs.InferenceInputs,
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
-        """
-        Forward pass for inference/generation.
-
-        Note: GPT-2 doesn't use KV cache, so this is simpler than Llama.
-
-        Args:
-            inference_inputs: InferenceInputs containing:
-                - input_ids: Input token indices [batch, seq]
-                - attention_mask: Optional attention mask
-                - position_offset: Not used for GPT2
-
-        Returns:
-            Logits tensor [batch, seq, vocab]
-        """
-        batch_size, seq_len = inference_inputs.input_ids.shape
-        device = inference_inputs.input_ids.device
-
-        # 1. Embed tokens (no dropout during inference)
-        token_embeds: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        token_embeds = self.token_embeddings(inference_inputs.input_ids)
-
-        # 2. Get position embeddings
-        pos_embeds = self._get_position_embeddings(batch_size, seq_len, device)
-
-        # 3. Combine embeddings (no dropout)
-        x = token_embeds + pos_embeds
+        x = self._maybe_apply_dropout(x, self.embedding_dropout)
 
         # 4. Apply transformer blocks
         hidden_states, _ = self._apply_transformer_blocks(
-            x, attention_mask=inference_inputs.attention_mask, output_hidden_states=False
+            x, attention_mask=attention_mask, output_hidden_states=False
         )
 
         # 5. Compute logits
         logits = self._compute_logits(hidden_states)
 
-        return logits
-
-    def get_num_params(self, non_embedding: bool = True) -> int:
-        """
-        Get number of parameters in the model.
-
-        Args:
-            non_embedding: If True, exclude position embeddings from count
-
-        Returns:
-            Total number of parameters
-        """
-        n_params = sum(p.numel() for p in self.parameters())
-        if non_embedding and self.position_embeddings is not None:
-            n_params -= self.position_embeddings.wpe.weight.numel()
-        return n_params
+        # 6. Return ForwardOutput
+        return outputs.ForwardOutput(logits=logits)

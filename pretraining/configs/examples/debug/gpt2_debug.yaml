@@ -11,7 +11,6 @@ model:
   token_embedding:
     vocab_size: 1000  # Tiny vocab
     embedding_dim: 64  # Tiny dim
-    embedding_dropout: 0.0
     init_std: 0.02
 
   # Position embeddings (GPT-2 uses learned position embeddings)
@@ -37,7 +36,6 @@ model:
     # Multi-head attention
     attention:
       num_heads: 4
-      dropout: 0.0
       bias: true
       max_seq_length: 128
       is_causal: true
@@ -47,7 +45,6 @@ model:
     ffn:
       intermediate_dim: 256  # 4 * hidden_dim
       activation: gelu
-      dropout: 0.0
       bias: true
 
   # Output head
@@ -58,9 +55,12 @@ model:
 # Training configuration
 training:
   # Top-level training loop fields
-  max_iters: 10
+  token_budget: 2560  # 10 steps × 2 batch × 128 seq_len
+  max_iters: 10  # Safety limit for debugging
   log_interval: 1
   seed: 1337
+  gradient_accumulation_steps: 1
+  mixed_precision: false
 
   # Data configuration
   data:
@@ -73,7 +73,6 @@ training:
   batch:
     batch_size: 2
     sequence_length: 128
-    gradient_accumulation_steps: 1
 
   # Optimizer configuration
   optimizer:
@@ -93,10 +92,15 @@ training:
     lr_decay_iters: 10
     min_lr: 0.00006
 
+  # Loss configuration
+  loss:
+    cross_entropy_weight: 1.0
+
   # Evaluation configuration
   evaluation:
     eval_interval: 5
     eval_iters: 2
+    num_eval_batches: 50
 
   # Checkpointing configuration
   checkpoint:
@@ -118,6 +122,11 @@ training:
   # Weights & Biases logging
   wandb_logging:
     enabled: false
-    project: debug
-    run_name: debug-gpt2
-    log_model: false
+    project: minllm-debug
+    entity: null  # Set your W&B entity/username
+    group: null
+    name: debug-gpt2
+    tags: ["debug", "gpt2", "test"]
+    log_artifacts: false
+    rank_zero_only: true
+    log_interval: 1

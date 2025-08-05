@@ -52,3 +52,21 @@ class TransformerConfig(base.BaseConfig):
             raise ValueError("Must have either ffn or moe")
 
         return self
+
+
+class GPT2TransformerConfig(TransformerConfig):
+    """Transformer config with GPT-2 specific attention type."""
+
+    attention: attention.MultiHeadAttentionConfig
+
+
+class Llama3TransformerConfig(TransformerConfig):
+    """Transformer config with Llama 3 specific attention type."""
+
+    attention: attention.GroupedQueryAttentionConfig
+
+
+class DeepSeek3TransformerConfig(TransformerConfig):
+    """Transformer config with DeepSeek 3 specific attention type."""
+
+    attention: attention.MultiHeadLatentAttentionConfig

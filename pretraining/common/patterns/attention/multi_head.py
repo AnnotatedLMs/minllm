@@ -31,7 +31,7 @@ class MultiHeadAttention(base.Attention):
         self,
         hidden_dim: int,
         num_heads: int,
-        dropout: float = 0.0,
+        dropout: typing.Optional[float] = None,
         bias: bool = True,
         max_seq_length: int = 1024,
         is_causal: bool = True,
@@ -45,7 +45,7 @@ class MultiHeadAttention(base.Attention):
         self.c_attn = nn.Linear(hidden_dim, 3 * hidden_dim, bias=bias)
         self.c_proj = nn.Linear(hidden_dim, hidden_dim, bias=bias)
 
-        self.resid_dropout = nn.Dropout(dropout)
+        self.resid_dropout = nn.Dropout(dropout) if dropout is not None else None
 
         # Only create bias buffer if we're not using Flash Attention
         # (Flash handles causal masking internally)
@@ -59,11 +59,11 @@ class MultiHeadAttention(base.Attention):
 
     def _compute_qkv_projections(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
     ) -> typing.Tuple[
-        jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-        jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-        jaxtyping.Float[torch.Tensor, "batch seq d_model"],
+        jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+        jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+        jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
     ]:
         """
         Compute Q, K, V projections using combined projection matrix.
@@ -71,25 +71,25 @@ class MultiHeadAttention(base.Attention):
         GPT-2 specific: Single linear layer produces all three projections.
         """
         # Combined projection to 3x hidden dimension
-        qkv: jaxtyping.Float[torch.Tensor, "batch seq 3*d_model"] = self.c_attn(x)
+        qkv: jaxtyping.Float[torch.Tensor, "batch seq_len 3*hidden_dim"] = self.c_attn(x)
 
         # Split into Q, K, V
-        q: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
-        k: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
-        v: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        q: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
+        k: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
+        v: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         q, k, v = qkv.split(self.hidden_dim, dim=2)
 
         return q, k, v
 
     def _reshape_to_multihead(
         self,
-        tensor: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
+        tensor: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
         batch_size: int,
         seq_len: int,
     ) -> jaxtyping.Float[torch.Tensor, "batch n_heads seq head_dim"]:
         """Reshape tensor for multi-head attention computation."""
         # First reshape to separate head dimension
-        reshaped: jaxtyping.Float[torch.Tensor, "batch seq n_heads head_dim"]
+        reshaped: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads head_dim"]
         reshaped = tensor.view(batch_size, seq_len, self.num_heads, self.head_dim)
 
         # Transpose to put heads before sequence
@@ -120,41 +120,36 @@ class MultiHeadAttention(base.Attention):
     def _merge_heads(
         self,
         x: jaxtyping.Float[torch.Tensor, "batch n_heads seq head_dim"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """Merge attention heads back to single tensor."""
         batch_size, num_heads, seq_len, head_dim = x.shape
 
         # Transpose heads and sequence dimensions
-        x_transposed: jaxtyping.Float[torch.Tensor, "batch seq n_heads head_dim"]
+        x_transposed: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads head_dim"]
         x_transposed = x.transpose(1, 2).contiguous()
 
         # Reshape to combine heads
-        x_merged: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        x_merged: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         x_merged = x_transposed.view(batch_size, seq_len, self.hidden_dim)
 
         return x_merged
 
     def _apply_output_projection(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
-        """Apply output projection and dropout."""
-        # Linear projection
-        output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
+        """Apply output projection."""
+        output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         output = self.c_proj(x)
-
-        # Residual dropout
-        output = self.resid_dropout(output)
-
         return output
 
     def forward(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
         attention_mask: typing.Optional[torch.Tensor] = None,
         position_offset: int = 0,
         **kwargs,
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
         Apply standard multi-head attention.
 
@@ -170,9 +165,9 @@ class MultiHeadAttention(base.Attention):
 
         batch_size, seq_len, hidden_dim = x.shape
 
-        q: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
-        k: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
-        v: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        q: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
+        k: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
+        v: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         q, k, v = self._compute_qkv_projections(x)
 
         q_heads: jaxtyping.Float[torch.Tensor, "batch n_heads seq head_dim"]
@@ -191,10 +186,12 @@ class MultiHeadAttention(base.Attention):
         else:
             attn_output = self._compute_manual_attention(q_heads, k_heads, v_heads, attention_mask)
 
-        merged: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        merged: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         merged = self._merge_heads(attn_output)
 
-        output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         output = self._apply_output_projection(merged)
+
+        output = self._maybe_apply_dropout(output, self.resid_dropout)
 
         return output

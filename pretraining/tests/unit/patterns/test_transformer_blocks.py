@@ -26,7 +26,7 @@ class TestGPT2TransformerBlock:
         return gpt2.GPT2TransformerBlock(
             hidden_dim=64,
             num_heads=4,
-            dropout=0.0,
+            dropout=None,
             max_seq_length=128,
             norm_eps=1e-5,
             use_flash_attention=False,
@@ -74,7 +74,6 @@ class TestLlama3TransformerBlock:
             num_heads=4,
             num_kv_heads=2,  # GQA
             rope_module=rope_module,
-            dropout=0.0,
             norm_eps=1e-5,
             use_flash_attention=False,
         )
@@ -124,7 +123,7 @@ class TestDeepSeek3TransformerBlock:
             rope_dim=64,
             num_experts=4,
             num_experts_per_token=2,
-            dropout=0.0,
+            dropout=None,
             norm_eps=1e-5,
             use_flash_attention=False,
         )

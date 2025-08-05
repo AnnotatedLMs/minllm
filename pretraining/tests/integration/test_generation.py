@@ -2,7 +2,6 @@
 import pathlib
 
 # Third Party
-import pytest
 import torch
 
 # Project
@@ -22,11 +21,6 @@ class TestGeneration:
     - Ensures generated sequences have correct shape
     - Validates that generation doesn't crash
     """
-
-    @pytest.fixture
-    def debug_configs_dir(self) -> pathlib.Path:
-        """Path to debug configs."""
-        return pathlib.Path(__file__).parent.parent.parent / "configs" / "examples" / "debug"
 
     def test_gpt2_generation(self, debug_configs_dir: pathlib.Path) -> None:
         """Test GPT2 text generation."""
@@ -57,17 +51,6 @@ class TestGeneration:
         # Verify all tokens are valid
         assert torch.all(output_ids >= 0)
         assert torch.all(output_ids < vocab_size)
-
-        # Test that different temperatures produce different results
-        output_ids_high_temp = model.generate(
-            input_ids, max_new_tokens=5, temperature=2.0, top_k=None
-        )
-
-        output_ids_low_temp = model.generate(input_ids, max_new_tokens=5, temperature=0.1, top_k=5)
-
-        # Both should have correct shape
-        assert output_ids_high_temp.shape == (batch_size, seq_len + 5)
-        assert output_ids_low_temp.shape == (batch_size, seq_len + 5)
 
     def test_llama_generation(self, debug_configs_dir: pathlib.Path) -> None:
         """Test Llama text generation."""

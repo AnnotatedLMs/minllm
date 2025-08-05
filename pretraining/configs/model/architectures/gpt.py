@@ -1,11 +1,10 @@
-# Standard Library
-
 # Third Party
 import pydantic
 import yaml
 
 # Project
 from pretraining.configs.model import initialization
+from pretraining.configs.model import transformer
 from pretraining.configs.model.architectures import base
 from pretraining.configs.model.components import attention
 from pretraining.configs.model.components import embeddings
@@ -15,10 +14,10 @@ from pretraining.configs.model.components import normalization
 class GPT2Config(base.BaseLLMConfig):
     """Configuration for GPT-2 architecture."""
 
-    # Position embeddings (required for GPT-2)
+    transformer: transformer.GPT2TransformerConfig
+
     position_embedding: embeddings.LearnedPositionEmbeddingConfig
 
-    # Weight initialization (required for GPT-2)
     weight_init: initialization.GPT2InitConfig
 
     @pydantic.model_validator(mode="after")
@@ -60,5 +59,8 @@ class GPT2Config(base.BaseLLMConfig):
         trans_dict = model_dict["transformer"]
         trans_dict["normalization"] = normalization.LayerNormConfig(**trans_dict["normalization"])
         trans_dict["attention"] = attention.MultiHeadAttentionConfig(**trans_dict["attention"])
+
+        # Create GPT2TransformerConfig
+        model_dict["transformer"] = transformer.GPT2TransformerConfig(**trans_dict)
 
         return cls(**model_dict)

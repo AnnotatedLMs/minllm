@@ -3,65 +3,93 @@ import typing
 
 # Third Party
 import torch
+import torch.nn as nn
 
 # Project
+from pretraining.utils.training import loss as loss_utils
 from pretraining.utils.training import metrics as metrics_module
 
 
-@torch.no_grad()
-def estimate_loss(
-    model: torch.nn.Module,
-    dataloader: typing.Optional[torch.utils.data.DataLoader],
-    num_batches: int = 50,
-) -> typing.Dict[str, float]:
-    """Estimate loss on a data split.
+class Evaluator:
+    """Handles model evaluation during training.
 
-    Simple evaluation for LLM pretraining - just computes average loss
-    and perplexity over a fixed number of batches.
-
-    Args:
-        model: Model to evaluate
-        dataloader: PyTorch DataLoader for evaluation
-        num_batches: Number of batches to evaluate on
-
-    Returns:
-        Dictionary with loss and perplexity
+    This class is responsible for computing evaluation metrics on validation data.
+    It assumes the model is already in eval mode when evaluate() is called.
     """
-    if dataloader is None:
-        return {"val/loss": float("inf"), "val/perplexity": float("inf")}
 
-    model.eval()
-    losses = []
+    def __init__(
+        self,
+        loss_handler: loss_utils.LossHandler,
+        num_eval_batches: int = 50,
+    ):
+        """Initialize evaluator.
 
-    # Create iterator
-    data_iter = iter(dataloader)
+        Args:
+            loss_handler: Loss handler for computing losses
+            num_eval_batches: Number of batches to evaluate on
+        """
+        self.loss_handler = loss_handler
+        self.num_eval_batches = num_eval_batches
 
-    for i in range(num_batches):
-        try:
-            batch = next(data_iter)
-        except StopIteration:
-            # If we run out of data, break early
-            if i == 0:
-                raise ValueError("Validation dataloader is empty")
-            break
+    @torch.no_grad()
+    def evaluate(
+        self,
+        model: nn.Module,
+        dataloader: typing.Optional[torch.utils.data.DataLoader],
+    ) -> typing.Dict[str, float]:
+        """Evaluate model and compute metrics.
 
-        # Move batch to device
-        device = next(model.parameters()).device
-        batch = {k: v.to(device) for k, v in batch.items()}
+        Note: This method assumes the model is already in eval mode.
+        The caller is responsible for managing model.train()/eval() state.
 
-        inputs = batch["input_ids"]
-        targets = batch["labels"]
+        Args:
+            model: Model to evaluate (should be in eval mode)
+            dataloader: Validation dataloader
 
-        # Use inference_forward for efficiency (no intermediate activations)
-        logits = model.inference_forward(inputs)
+        Returns:
+            Dictionary of evaluation metrics
+        """
+        if dataloader is None:
+            return {"val/loss": float("inf"), "val/perplexity": float("inf")}
 
-        # Compute loss
-        loss = metrics_module.compute_loss(logits, targets)
-        losses.append(loss.item())
+        losses = []
 
-    # Compute average metrics
-    avg_loss = sum(losses) / len(losses)
-    perplexity = metrics_module.compute_perplexity(avg_loss)
+        # Create iterator
+        data_iter = iter(dataloader)
 
-    model.train()
-    return {"val/loss": avg_loss, "val/perplexity": perplexity}
+        for i in range(self.num_eval_batches):
+            try:
+                batch = next(data_iter)
+            except StopIteration:
+                # If we run out of data, break early
+                if i == 0:
+                    raise ValueError("Validation dataloader is empty")
+                break
+
+            # Move batch to device
+            device = next(model.parameters()).device
+            batch = {k: v.to(device) for k, v in batch.items()}
+
+            # Forward pass - model is in eval mode, so no dropout/MTP/aux losses
+            model_output = model.forward(
+                input_ids=batch["input_ids"],
+                attention_mask=batch.get("attention_mask"),
+            )
+
+            # Compute loss using loss handler for consistency
+            # Note: We only care about cross-entropy loss for evaluation
+            loss = self.loss_handler.compute_cross_entropy_loss(
+                model_output.logits,
+                batch["labels"],
+                ignore_index=self.loss_handler.config.ignore_index,
+            )
+            losses.append(loss.item())
+
+        # Compute average metrics
+        avg_loss = sum(losses) / len(losses)
+        perplexity = metrics_module.compute_perplexity(avg_loss)
+
+        return {
+            "val/loss": avg_loss,
+            "val/perplexity": perplexity,
+        }

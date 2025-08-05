@@ -7,10 +7,8 @@ import torch
 import torch.nn as nn
 
 # Project
-from pretraining.common.base import inputs
 from pretraining.common.base import llm
 from pretraining.common.base import outputs
-from pretraining.common.patterns.attention import grouped_query
 from pretraining.common.patterns.blocks import llama3 as llama3_blocks
 from pretraining.common.patterns.cache import kv_cache
 from pretraining.common.patterns.position import rope
@@ -44,15 +42,12 @@ class Llama3(llm.BaseLLM):
         hidden_dim: int,
         n_layers: int,
         block_size: int,
-        # Token embedding params
-        embedding_dropout: float = 0.0,
         # RoPE params
         rope_theta: float = 10000.0,
         rope_scaling: typing.Optional[typing.Dict[str, typing.Any]] = None,
         # Transformer params
         num_heads: int = 32,
         num_kv_heads: typing.Optional[int] = None,  # For GQA
-        dropout: float = 0.0,
         norm_eps: float = 1e-5,
         use_flash_attention: bool = False,
         # FFN params
@@ -66,15 +61,13 @@ class Llama3(llm.BaseLLM):
 
         Args:
             vocab_size: Size of vocabulary
-            hidden_dim: Hidden dimension (d_model)
+            hidden_dim: Hidden dimension
             n_layers: Number of transformer layers
             block_size: Maximum sequence length
-            embedding_dropout: Dropout for embeddings
             rope_theta: Base frequency for RoPE
             rope_scaling: Optional RoPE scaling config
             num_heads: Number of attention heads
             num_kv_heads: Number of key/value heads (for GQA)
-            dropout: Dropout rate throughout model
             norm_eps: RMSNorm epsilon
             use_flash_attention: Whether to use flash attention
             ffn_dim_multiplier: Multiplier for FFN dimension
@@ -95,9 +88,6 @@ class Llama3(llm.BaseLLM):
             embedding_dim=hidden_dim,
         )
 
-        # Dropout for embeddings
-        self.embed_dropout = nn.Dropout(embedding_dropout)
-
         # RoPE module
         scaling_config = None
         if rope_scaling:
@@ -116,7 +106,6 @@ class Llama3(llm.BaseLLM):
                     num_heads=num_heads,
                     num_kv_heads=num_kv_heads if num_kv_heads else num_heads,
                     rope_module=self.rope,
-                    dropout=dropout,
                     norm_eps=norm_eps,
                     ffn_dim_multiplier=ffn_dim_multiplier,
                     multiple_of=multiple_of,
@@ -132,14 +121,11 @@ class Llama3(llm.BaseLLM):
         # Output projection - separate (not tied)
         self.lm_head = nn.Linear(hidden_dim, vocab_size, bias=lm_head_bias)
 
-        # No weight initialization needed - Llama uses PyTorch defaults
-
     @classmethod
     def from_config(cls, config: llama.Llama3Config) -> "Llama3":
         """Create Llama3 from a config object."""
-        # Extract attention config
+        # Extract attention config - now properly typed as GroupedQueryAttentionConfig
         attn_config = config.transformer.attention
-        num_kv_heads = getattr(attn_config, "num_kv_heads", None)
 
         # Extract RoPE scaling if present
         rope_scaling = None
@@ -152,15 +138,12 @@ class Llama3(llm.BaseLLM):
             hidden_dim=config.transformer.hidden_dim,
             n_layers=config.transformer.n_layers,
             block_size=config.transformer.block_size,
-            # Token embedding params
-            embedding_dropout=config.token_embedding.embedding_dropout,
             # RoPE params
             rope_theta=config.transformer.rope.theta,
             rope_scaling=rope_scaling,
             # Transformer params
             num_heads=attn_config.num_heads,
-            num_kv_heads=num_kv_heads,
-            dropout=config.transformer.dropout,
+            num_kv_heads=attn_config.num_kv_heads,
             norm_eps=config.transformer.normalization.norm_eps,
             use_flash_attention=attn_config.use_flash_attention,
             # FFN params
@@ -172,25 +155,23 @@ class Llama3(llm.BaseLLM):
 
     def _apply_transformer_blocks(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
         attention_mask: typing.Optional[torch.Tensor] = None,
         position_offset: int = 0,
         output_hidden_states: bool = False,
     ) -> typing.Tuple[
-        jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-        typing.Optional[typing.List[jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]]],
+        jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+        typing.Optional[typing.List[jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]]],
     ]:
         """Pass input through all transformer blocks."""
         # Store hidden states if requested
         all_hidden_states = [] if output_hidden_states else None
 
         # Process through each block
-        hidden: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"] = x
+        hidden: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"] = x
         for i, block in enumerate(self.blocks):
             if output_hidden_states:
                 all_hidden_states.append(hidden)
-
-            # Note: KV caching is now handled internally by attention layers
 
             # Forward through block
             hidden = block(
@@ -199,10 +180,8 @@ class Llama3(llm.BaseLLM):
                 position_offset=position_offset,
             )
 
-            # Note: KV caching is now handled internally by attention layers
-
         # Apply final norm
-        normalized: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
+        normalized: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         normalized = self.norm(hidden)
 
         if output_hidden_states:
@@ -212,120 +191,48 @@ class Llama3(llm.BaseLLM):
 
     def _compute_logits(
         self,
-        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
+        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len vocab"]:
         """Compute output logits from hidden states."""
         # Llama uses separate output projection
-        logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"]
+        logits: jaxtyping.Float[torch.Tensor, "batch seq_len vocab"]
         logits = self.lm_head(hidden_states)
         return logits
 
-    def training_forward(
+    def forward(
         self,
-        training_inputs: inputs.TrainingInputs,
-    ) -> outputs.TrainingOutput:
+        input_ids: jaxtyping.Int[torch.Tensor, "batch seq"],
+        attention_mask: typing.Optional[torch.Tensor] = None,
+        position_offset: int = 0,
+    ) -> outputs.ForwardOutput:
         """
-        Forward pass for training - no KV cache.
+        Unified forward pass for both training and inference.
 
         Args:
-            training_inputs: TrainingInputs containing:
-                - input_ids: Input token indices [batch, seq]
-                - labels: Target tokens for loss computation
-                - attention_mask: Optional attention mask
-                - mtp_targets: Not used for Llama3
+            input_ids: Input token indices [batch, seq]
+            attention_mask: Optional attention mask
+            position_offset: Starting position for RoPE (for KV cache during generation)
 
         Returns:
-            TrainingOutput containing:
-                - loss: Cross-entropy loss for next-token prediction
+            ForwardOutput containing logits
         """
-        # 1. Embed tokens and apply dropout
-        x: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        x = self.token_embeddings(training_inputs.input_ids)
-        x = self.embed_dropout(x)
-
-        # 2. Apply transformer blocks (no position offset for training)
-        hidden_states, all_hidden_states = self._apply_transformer_blocks(
-            x,
-            attention_mask=training_inputs.attention_mask,
-            position_offset=0,  # Always 0 for training
-            output_hidden_states=False,
-        )
-
-        # 3. Compute logits
-        logits = self._compute_logits(hidden_states)
-
-        # 4. Compute loss
-        loss = self.compute_loss(logits, training_inputs.labels)
-
-        # Return TrainingOutput
-        return outputs.TrainingOutput(loss=loss)
-
-    @torch.no_grad()
-    def inference_forward(
-        self,
-        inference_inputs: inputs.InferenceInputs,
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
-        """
-        Forward pass for inference/generation with KV cache support.
-
-        This method assumes install_kv_cache() has been called first.
-
-        Args:
-            inference_inputs: InferenceInputs containing:
-                - input_ids: Input token indices [batch, seq]
-                - attention_mask: Optional attention mask
-                - position_offset: Starting position for RoPE (for incremental generation)
-
-        Returns:
-            Logits tensor [batch, seq, vocab]
-        """
-        # 1. Embed tokens (no dropout during inference)
-        x: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        x = self.token_embeddings(inference_inputs.input_ids)
+        # 1. Token embeddings
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
+        x = self.token_embeddings(input_ids)
 
         # 2. Apply transformer blocks with position offset
         hidden_states, _ = self._apply_transformer_blocks(
             x,
-            attention_mask=inference_inputs.attention_mask,
-            position_offset=inference_inputs.position_offset,
+            attention_mask=attention_mask,
+            position_offset=position_offset,
             output_hidden_states=False,
         )
 
         # 3. Compute logits
         logits = self._compute_logits(hidden_states)
 
-        return logits
-
-    def compute_loss(
-        self,
-        logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"],
-        targets: jaxtyping.Int[torch.Tensor, "batch seq"],
-        ignore_index: int = -100,
-        **kwargs,
-    ) -> torch.Tensor:
-        """Compute cross-entropy loss for language modeling."""
-        # Shift for next-token prediction
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = targets[..., 1:].contiguous()
-
-        # Flatten for loss computation
-        shift_logits = shift_logits.view(-1, shift_logits.size(-1))
-        shift_labels = shift_labels.view(-1)
-
-        # Compute loss
-        loss = nn.functional.cross_entropy(shift_logits, shift_labels, ignore_index=ignore_index)
-
-        return loss
-
-    def get_num_params(self) -> int:
-        """
-        Get number of parameters in the model.
-
-        Returns:
-            Total number of parameters
-        """
-        n_params = sum(p.numel() for p in self.parameters())
-        return n_params
+        # 4. Return ForwardOutput
+        return outputs.ForwardOutput(logits=logits)
 
     def install_kv_cache(
         self,
@@ -344,20 +251,14 @@ class Llama3(llm.BaseLLM):
             device: Device to allocate cache on
         """
         for block in self.blocks:
-            if isinstance(block.attention, grouped_query.GroupedQueryAttention):
-                # Get number of KV heads from attention layer
-                n_kv_heads = block.attention.num_kv_heads
-                head_dim = block.attention.head_dim
-
-                # Create and install cache
-                block.attention.cache = kv_cache.KVCache(
-                    batch_size=batch_size,
-                    max_seq_length=max_seq_length,
-                    n_kv_heads=n_kv_heads,
-                    head_dim=head_dim,
-                    dtype=dtype,
-                    device=device,
-                )
+            block.attention.cache = kv_cache.KVCache(
+                batch_size=batch_size,
+                max_seq_length=max_seq_length,
+                n_kv_heads=block.attention.num_kv_heads,
+                head_dim=block.attention.head_dim,
+                dtype=dtype,
+                device=device,
+            )
 
     def clear_kv_cache(self) -> None:
         """Remove KV cache from all attention layers."""
@@ -407,21 +308,21 @@ class Llama3(llm.BaseLLM):
         position_offset = 0
         if use_cache:
             # Process full prompt with position offset 0
-            inference_inputs = inputs.InferenceInputs(
+            model_output = self.forward(
                 input_ids=idx,
-                attention_mask=None,
+                attention_mask=kwargs.get("attention_mask"),
                 position_offset=position_offset,
             )
-            logits = self.inference_forward(inference_inputs)
+            logits = model_output.logits
             position_offset = seq_len
         else:
             # Without cache, we'll process the full sequence each time
-            inference_inputs = inputs.InferenceInputs(
+            model_output = self.forward(
                 input_ids=idx,
-                attention_mask=None,
+                attention_mask=kwargs.get("attention_mask"),
                 position_offset=0,
             )
-            logits = self.inference_forward(inference_inputs)
+            logits = model_output.logits
 
         # Start generation loop
         generated = idx
@@ -448,24 +349,24 @@ class Llama3(llm.BaseLLM):
             # Get logits for next token
             if use_cache:
                 # Only process the new token with updated position
-                inference_inputs = inputs.InferenceInputs(
+                model_output = self.forward(
                     input_ids=idx_next,
                     attention_mask=None,
                     position_offset=position_offset,
                 )
-                logits = self.inference_forward(inference_inputs)
+                logits = model_output.logits
                 position_offset += 1
             else:
                 # Process full sequence (less efficient)
                 # Crop if sequence is too long
                 if generated.size(1) > self.block_size:
                     generated = generated[:, -self.block_size :]
-                inference_inputs = inputs.InferenceInputs(
+                model_output = self.forward(
                     input_ids=generated,
-                    attention_mask=None,
+                    attention_mask=kwargs.get("attention_mask"),
                     position_offset=0,
                 )
-                logits = self.inference_forward(inference_inputs)
+                logits = model_output.logits
 
         # Clean up KV cache
         if use_cache:

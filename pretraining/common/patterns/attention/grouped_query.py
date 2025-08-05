@@ -69,11 +69,11 @@ class GroupedQueryAttention(base.Attention):
 
     def _compute_projections(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
     ) -> typing.Tuple[
-        jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-        jaxtyping.Float[torch.Tensor, "batch seq n_kv_heads*head_dim"],
-        jaxtyping.Float[torch.Tensor, "batch seq n_kv_heads*head_dim"],
+        jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+        jaxtyping.Float[torch.Tensor, "batch seq_len n_kv_heads*head_dim"],
+        jaxtyping.Float[torch.Tensor, "batch seq_len n_kv_heads*head_dim"],
     ]:
         """
         Compute Q, K, V projections.
@@ -81,16 +81,16 @@ class GroupedQueryAttention(base.Attention):
         GQA specific: K and V have fewer heads than Q.
         """
         # Query projection - full dimension
-        q: jaxtyping.Float[torch.Tensor, "batch seq d_model"] = self.q_proj(x)
+        q: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"] = self.q_proj(x)
         # Key/Value projections - reduced dimension
-        k: jaxtyping.Float[torch.Tensor, "batch seq n_kv_heads*head_dim"] = self.k_proj(x)
-        v: jaxtyping.Float[torch.Tensor, "batch seq n_kv_heads*head_dim"] = self.v_proj(x)
+        k: jaxtyping.Float[torch.Tensor, "batch seq_len n_kv_heads*head_dim"] = self.k_proj(x)
+        v: jaxtyping.Float[torch.Tensor, "batch seq_len n_kv_heads*head_dim"] = self.v_proj(x)
 
         return q, k, v
 
     def _reshape_queries_to_multihead(
         self,
-        q: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
+        q: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
         batch_size: int,
         seq_len: int,
     ) -> jaxtyping.Float[torch.Tensor, "batch n_heads seq head_dim"]:
@@ -102,7 +102,7 @@ class GroupedQueryAttention(base.Attention):
 
     def _reshape_kv_to_multihead(
         self,
-        tensor: jaxtyping.Float[torch.Tensor, "batch seq n_kv_heads*head_dim"],
+        tensor: jaxtyping.Float[torch.Tensor, "batch seq_len n_kv_heads*head_dim"],
         batch_size: int,
         seq_len: int,
     ) -> jaxtyping.Float[torch.Tensor, "batch n_kv_heads seq head_dim"]:
@@ -114,9 +114,9 @@ class GroupedQueryAttention(base.Attention):
 
     def _repeat_kv(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq n_kv_heads head_dim"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len n_kv_heads head_dim"],
         n_rep: int,
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq n_heads head_dim"]:
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len n_heads head_dim"]:
         """
         Repeat key/value heads to match number of query heads.
 
@@ -208,35 +208,35 @@ class GroupedQueryAttention(base.Attention):
     def _merge_heads(
         self,
         x: jaxtyping.Float[torch.Tensor, "batch n_heads seq head_dim"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """Merge attention heads back to single tensor."""
         batch_size, num_heads, seq_len, head_dim = x.shape
 
         # Transpose heads and sequence dimensions
-        x_transposed: jaxtyping.Float[torch.Tensor, "batch seq n_heads head_dim"]
+        x_transposed: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads head_dim"]
         x_transposed = x.transpose(1, 2).contiguous()
 
         # Reshape to combine heads
-        x_merged: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        x_merged: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         x_merged = x_transposed.view(batch_size, seq_len, self.hidden_dim)
 
         return x_merged
 
     def _apply_output_projection(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """Apply output projection."""
-        output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         output = self.o_proj(x)
         return output
 
     def forward(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
         attention_mask: typing.Optional[torch.Tensor] = None,
         position_offset: int = 0,
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
         Apply grouped query attention.
 
@@ -250,9 +250,9 @@ class GroupedQueryAttention(base.Attention):
         """
         batch_size, seq_len, hidden_dim = x.shape
 
-        q: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
-        k: jaxtyping.Float[torch.Tensor, "batch seq n_kv_heads*head_dim"]
-        v: jaxtyping.Float[torch.Tensor, "batch seq n_kv_heads*head_dim"]
+        q: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
+        k: jaxtyping.Float[torch.Tensor, "batch seq_len n_kv_heads*head_dim"]
+        v: jaxtyping.Float[torch.Tensor, "batch seq_len n_kv_heads*head_dim"]
         q, k, v = self._compute_projections(x)
 
         q_heads: jaxtyping.Float[torch.Tensor, "batch n_heads seq head_dim"]
@@ -302,10 +302,10 @@ class GroupedQueryAttention(base.Attention):
                 q_heads, k_repeated, v_repeated, attention_mask
             )
 
-        merged: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        merged: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         merged = self._merge_heads(attn_output)
 
-        output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         output = self._apply_output_projection(merged)
 
         return output

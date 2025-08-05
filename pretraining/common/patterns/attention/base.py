@@ -44,7 +44,7 @@ class Attention(attention.BaseAttention):
         self,
         hidden_dim: int,
         num_heads: int,
-        dropout: float = 0.0,
+        dropout: typing.Optional[float] = None,
         is_causal: bool = True,
         use_flash_attention: bool = True,
     ):
@@ -52,13 +52,11 @@ class Attention(attention.BaseAttention):
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
         self.head_dim = hidden_dim // num_heads
-        self.dropout = dropout
+        self.attn_dropout = nn.Dropout(dropout) if dropout is not None else None
         self.is_causal = is_causal
         self.use_flash_attention = use_flash_attention
 
         assert hidden_dim % num_heads == 0
-
-        self.attn_dropout = nn.Dropout(dropout)
 
     def _compute_attention_scores(
         self,
@@ -86,13 +84,13 @@ class Attention(attention.BaseAttention):
         self,
         seq_len: int,
         device: torch.device,
-    ) -> jaxtyping.Bool[torch.Tensor, "seq seq"]:
+    ) -> jaxtyping.Bool[torch.Tensor, "seq_len seq_len"]:
         """
         Create lower triangular causal mask.
 
         For autoregressive models - position i can only attend to positions 0...i.
         """
-        mask: jaxtyping.Bool[torch.Tensor, "seq seq"]
+        mask: jaxtyping.Bool[torch.Tensor, "seq_len seq_len"]
         mask = torch.tril(torch.ones(seq_len, seq_len, device=device)).bool()
         return mask
 
@@ -106,7 +104,7 @@ class Attention(attention.BaseAttention):
             return scores
 
         # Create causal mask
-        causal_mask: jaxtyping.Bool[torch.Tensor, "seq seq"]
+        causal_mask: jaxtyping.Bool[torch.Tensor, "seq_len seq_len"]
         causal_mask = self._create_causal_mask(seq_len, scores.device)
 
         # Apply mask (set future positions to -inf)
@@ -143,15 +141,6 @@ class Attention(attention.BaseAttention):
         attn_probs: jaxtyping.Float[torch.Tensor, "batch n_heads seq_q seq_k"]
         attn_probs = F.softmax(scores, dim=-1)
         return attn_probs
-
-    def _apply_attention_dropout(
-        self,
-        attn_probs: jaxtyping.Float[torch.Tensor, "batch n_heads seq_q seq_k"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch n_heads seq_q seq_k"]:
-        """Apply dropout to attention probabilities - randomly zeros some attention weights during training."""
-        dropped_probs: jaxtyping.Float[torch.Tensor, "batch n_heads seq_q seq_k"]
-        dropped_probs = self.attn_dropout(attn_probs)
-        return dropped_probs
 
     def _compute_weighted_values(
         self,
@@ -200,9 +189,10 @@ class Attention(attention.BaseAttention):
                 k,
                 v,
                 attn_mask=attention_mask,
-                dropout_p=self.dropout if self.training else 0.0,
-                is_causal=self.is_causal
-                and attention_mask is None,  # Only use is_causal if no custom mask
+                dropout_p=self.attn_dropout.p
+                if self.attn_dropout is not None and self.training
+                else 0.0,
+                is_causal=self.is_causal and attention_mask is None,
                 enable_gqa=enable_gqa,  # Enable GQA optimization for grouped query attention
             )
 
@@ -243,7 +233,7 @@ class Attention(attention.BaseAttention):
         attn_probs = self._compute_attention_probs(scores)
 
         # Step 5: Apply dropout
-        attn_probs = self._apply_attention_dropout(attn_probs)
+        attn_probs = self._maybe_apply_dropout(attn_probs, self.attn_dropout)
 
         # Step 6: Compute weighted values
         output: jaxtyping.Float[torch.Tensor, "batch n_heads seq_q head_dim"]

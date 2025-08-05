@@ -184,6 +184,6 @@ def build_collator(
     """
     # Check if model has MTP configuration
     if hasattr(model_config, "mtp") and model_config.mtp is not None:
-        return MTPDataCollator(mtp_depth=model_config.mtp.depth)
+        return MTPDataCollator(mtp_depth=model_config.mtp.n_predict)
 
     return DataCollator()

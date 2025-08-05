@@ -1,10 +1,12 @@
 # Standard Library
+import pathlib
 import time
 import typing
 
 # Third Party
 import torch
 import torch.nn as nn
+import wandb
 from torch.nn import parallel
 
 # Project
@@ -43,12 +45,12 @@ class LLMTrainer:
     def __init__(
         self,
         model: nn.Module,
-        dist_model: typing.Union[
-            nn.Module, parallel.DistributedDataParallel
-        ],  # TODO extend to FSDP later
+        dist_model: typing.Union[nn.Module, parallel.DistributedDataParallel],
         config: trainer_configs.TrainingLoopConfig,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler,
+        loss_handler: loss_utils.LossHandler,
+        evaluator: evaluation.Evaluator,
         train_dataloader: torch.utils.data.DataLoader,
         device: torch.device,
         val_dataloader: typing.Optional[torch.utils.data.DataLoader] = None,
@@ -63,6 +65,8 @@ class LLMTrainer:
             config: Training configuration
             optimizer: Configured optimizer
             scheduler: Configured learning rate scheduler
+            loss_handler: Loss handler for computing losses
+            evaluator: Evaluator for computing validation metrics
             train_dataloader: Training data loader
             device: Device to run on
             val_dataloader: Optional validation data loader
@@ -74,6 +78,8 @@ class LLMTrainer:
         self.config = config
         self.optimizer = optimizer
         self.scheduler = scheduler
+        self.loss_handler = loss_handler
+        self.evaluator = evaluator
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
         self.device = device
@@ -84,38 +90,59 @@ class LLMTrainer:
         # Will be initialized in setup()
         self.logger = None
         self.state = None
-        self.metrics_tracker = None
         self.scaler = None
         self.num_params = None
 
     def setup(self) -> None:
         """Setup trainer components."""
-        # Setup logging
         self.logger = logger_utils.get_logger(__name__)
 
-        # Setup training state
         self.state = state.TrainingState(
-            max_iterations=self.config.training.max_steps,
-            max_tokens=self.config.training.max_tokens,
-            eval_interval=self.config.evaluator.eval_interval,
-            checkpoint_interval=self.config.checkpointer.save_interval,
-            log_interval=self.config.training.log_interval,
+            max_iterations=self.config.max_iters,
+            token_budget=self.config.token_budget,
+            eval_interval=self.config.evaluation.eval_interval,
+            checkpoint_interval=self.config.checkpoint.save_interval,
+            log_interval=self.config.log_interval,
         )
 
-        # Setup metrics tracking
-        self.metrics_tracker = metrics.MetricsTracker()
+        self.scaler = torch.amp.GradScaler() if self.config.mixed_precision else None
 
-        # Setup mixed precision
-        self.scaler = torch.amp.GradScaler() if self.config.training.mixed_precision else None
-
-        # Calculate model info
         self.num_params = sum(p.numel() for p in self.model.parameters())
+
+        # Initialize wandb if enabled
+        if self.config.wandb_logging.enabled and (
+            not self.config.wandb_logging.rank_zero_only or self.is_main_process
+        ):
+            # Create wandb directory
+            wandb_dir = pathlib.Path(self.config.checkpoint.checkpoint_dir) / "wandb"
+            wandb_dir.mkdir(parents=True, exist_ok=True)
+
+            # Initialize wandb
+            wandb.init(
+                dir=str(wandb_dir),
+                project=self.config.wandb_logging.project,
+                entity=self.config.wandb_logging.entity,
+                group=self.config.wandb_logging.group,
+                name=self.config.wandb_logging.name,
+                tags=self.config.wandb_logging.tags,
+                config=self.config.model_dump(),  # Convert config to dict
+            )
+
+            # Log model info
+            wandb.config.update(
+                {
+                    "num_parameters": self.num_params,
+                    "world_size": self.world_size,
+                }
+            )
 
         if self.is_main_process:
             self.logger.info(f"Trainer setup complete on {self.device}")
             self.logger.info(f"Model has {self.num_params:,} parameters")
             if self.world_size > 1:
                 self.logger.info(f"Using distributed training with {self.world_size} processes")
+            if self.config.wandb_logging.enabled:
+                self.logger.info("Weights & Biases logging enabled")
 
     def train_step(self, batch: typing.Dict[str, torch.Tensor]) -> typing.Dict[str, float]:
         """Run single training step.
@@ -138,34 +165,69 @@ class LLMTrainer:
         )
 
         # Mixed precision context
-        autocast_context = (
-            torch.cuda.amp.autocast if self.config.training.mixed_precision else torch.no_grad
-        )
+        autocast_context = torch.cuda.amp.autocast if self.config.mixed_precision else torch.no_grad
 
-        with autocast_context(enabled=self.config.training.mixed_precision):
+        with autocast_context(enabled=self.config.mixed_precision):
             # Forward pass through distributed model
-            model_output = self.dist_model.training_forward(training_inputs)
+            # The model will automatically use self.training to determine behavior
+            model_output = self.dist_model.forward(
+                input_ids=training_inputs.input_ids,
+                attention_mask=training_inputs.attention_mask,
+            )
 
-            # Extract losses
-            losses = loss_utils.LossHandler.extract_losses(model_output)
+            # Compute losses from logits
+            losses = self.loss_handler.compute_losses(model_output, training_inputs)
 
             # Aggregate losses
-            total_loss = loss_utils.LossHandler.aggregate_losses(losses)
+            total_loss = self.loss_handler.aggregate_losses(losses)
 
             # Scale for gradient accumulation
-            scaled_loss = total_loss / self.config.training.gradient_accumulation_steps
+            scaled_loss = total_loss / self.config.gradient_accumulation_steps
 
         # Backward pass
-        if self.config.training.mixed_precision and self.scaler is not None:
+        if self.config.mixed_precision and self.scaler is not None:
             self.scaler.scale(scaled_loss).backward()
         else:
             scaled_loss.backward()
 
-        # Prepare metrics
-        step_metrics = {f"train/{name}": value.item() for name, value in losses.items()}
-        step_metrics["train/total_loss"] = total_loss.item()
+        # Collect step metrics
+        step_metrics = metrics.collect_train_step_metrics(
+            loss=total_loss,
+            ce_loss=losses.get("ce_loss"),
+            z_loss=losses.get("z_loss"),
+            moe_aux_loss=losses.get("moe_aux_loss"),
+            mtp_losses=losses.get("mtp_losses"),
+        )
 
         return step_metrics
+
+    def evaluate(self) -> typing.Dict[str, float]:
+        """Run evaluation on validation set.
+
+        This method manages the model's train/eval state to ensure
+        proper behavior during evaluation.
+
+        Returns:
+            Dictionary of evaluation metrics
+        """
+        if self.val_dataloader is None:
+            return {}
+
+        # Save current training state and switch to eval mode
+        was_training = self.dist_model.training
+        self.dist_model.eval()
+
+        try:
+            # Run evaluation
+            eval_metrics = self.evaluator.evaluate(
+                self.dist_model,
+                self.val_dataloader,
+            )
+            return eval_metrics
+        finally:
+            # Always restore original training state
+            if was_training:
+                self.dist_model.train()
 
     def optimizer_step(self) -> typing.Dict[str, float]:
         """Run optimizer step with gradient clipping.
@@ -174,20 +236,20 @@ class LLMTrainer:
             Dictionary with gradient norm
         """
         # Unscale gradients if using AMP
-        if self.config.training.mixed_precision and self.scaler is not None:
+        if self.config.mixed_precision and self.scaler is not None:
             self.scaler.unscale_(self.optimizer)
 
         # Compute gradient norm before clipping
         grad_norm = metrics.compute_gradient_norm(self.dist_model)
 
         # Clip gradients
-        if self.config.training.max_grad_norm is not None:
+        if self.config.optimizer.grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(
-                self.dist_model.parameters(), self.config.training.max_grad_norm
+                self.dist_model.parameters(), self.config.optimizer.grad_clip
             )
 
         # Optimizer step
-        if self.config.training.mixed_precision and self.scaler is not None:
+        if self.config.mixed_precision and self.scaler is not None:
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
@@ -199,7 +261,9 @@ class LLMTrainer:
         # Step scheduler
         self.scheduler.step()
 
-        return {"train/grad_norm": grad_norm}
+        # Collect optimizer metrics
+        optim_metrics = metrics.collect_optimizer_metrics(self.optimizer, grad_norm)
+        return optim_metrics
 
     def train(self) -> None:
         """Run training loop."""
@@ -218,10 +282,12 @@ class LLMTrainer:
         while not self.state.should_stop():
             # Start iteration timer
             iter_start_time = time.time()
-            self.metrics_tracker.reset()
+
+            # Initialize accumulators for metrics across micro-batches
+            accumulated_metrics = {}
 
             # Accumulate gradients over multiple batches
-            for _ in range(self.config.training.gradient_accumulation_steps):
+            for micro_batch_idx in range(self.config.gradient_accumulation_steps):
                 try:
                     batch = next(train_iter)
                 except StopIteration:
@@ -231,17 +297,21 @@ class LLMTrainer:
 
                 step_metrics = self.train_step(batch)
 
-                # Update metrics tracker
+                # Accumulate metrics across micro-batches
                 for key, value in step_metrics.items():
-                    self.metrics_tracker.update(**{key.split("/")[1]: value})
+                    if key not in accumulated_metrics:
+                        accumulated_metrics[key] = 0.0
+                    accumulated_metrics[key] += value
+
+            # Average accumulated metrics
+            for key in accumulated_metrics:
+                accumulated_metrics[key] /= self.config.gradient_accumulation_steps
 
             # Optimizer step
             optim_metrics = self.optimizer_step()
 
             # Update state
-            batch_size = (
-                batch["input_ids"].shape[0] * self.config.training.gradient_accumulation_steps
-            )
+            batch_size = batch["input_ids"].shape[0] * self.config.gradient_accumulation_steps
             seq_length = batch["input_ids"].shape[1]
             self.state.update(batch_size, seq_length)
 
@@ -253,44 +323,60 @@ class LLMTrainer:
             # Get GPU memory usage
             peak_memory_mb = torch_utils.peak_gpu_memory(reset=False)
 
-            # Log metrics (main process only)
-            if self.state.should_log() and self.is_main_process:
-                log_metrics = self.metrics_tracker.get_all_averages()
-                log_metrics.update(optim_metrics)
-                log_metrics.update(
-                    {
-                        "train/tokens_per_sec": tokens_per_sec,
-                        "train/lr": self.optimizer.param_groups[0]["lr"],
-                    }
-                )
-                if peak_memory_mb is not None:
-                    log_metrics["train/peak_gpu_memory_mb"] = peak_memory_mb
-                log_metrics.update(self.state.get_progress())
+            # Collect all metrics for this step
+            if self.state.should_log():
+                # Start with accumulated training metrics
+                all_metrics = accumulated_metrics.copy()
 
-                # Format for logging
-                log_message = (
-                    f"[Step {self.state.iteration}] "
-                    f"loss: {log_metrics.get('loss', 0):.4f}, "
-                    f"ppl: {metrics.compute_perplexity(log_metrics.get('loss', 0)):.2f}, "
-                    f"lr: {log_metrics['train/lr']:.2e}, "
-                    f"tokens/s: {tokens_per_sec:.0f}"
+                # Add optimizer metrics
+                all_metrics.update(optim_metrics)
+
+                # Add throughput metrics
+                throughput_metrics = metrics.collect_throughput_metrics(
+                    tokens_processed=tokens_processed,
+                    elapsed_time=iter_time,
+                    global_step=self.state.iteration,
                 )
-                if peak_memory_mb is not None:
-                    log_message += f", mem: {peak_memory_mb:.0f}MB"
-                self.logger.info(log_message)
+                all_metrics.update(throughput_metrics)
+
+                # Add system metrics
+                system_metrics = metrics.collect_system_metrics()
+                all_metrics.update(system_metrics)
+
+                # Add progress info
+                all_metrics.update(self.state.get_progress())
+
+                # Log to console (main process only)
+                if self.is_main_process:
+                    # Format for logging
+                    log_message = (
+                        f"[Step {self.state.iteration}] "
+                        f"loss: {accumulated_metrics.get('train/ce_loss', accumulated_metrics.get('train/total_loss', 0)):.4f}, "
+                        f"ppl: {accumulated_metrics.get('train/perplexity', 0):.2f}, "
+                        f"lr: {optim_metrics.get('optim/lr', 0):.2e}, "
+                        f"tokens/s: {throughput_metrics.get('throughput/tokens_per_sec', 0):.0f}"
+                    )
+                    if "system/peak_gpu_memory_mb" in system_metrics:
+                        log_message += f", mem: {system_metrics['system/peak_gpu_memory_mb']:.0f}MB"
+                    self.logger.info(log_message)
+
+                # Log to W&B if enabled
+                if self.config.wandb_logging.enabled and (
+                    not self.config.wandb_logging.rank_zero_only or self.is_main_process
+                ):
+                    if self.state.iteration % self.config.wandb_logging.log_interval == 0:
+                        wandb.log(all_metrics, step=self.state.iteration)
 
             # Evaluation
             if self.state.should_eval():
                 if self.is_main_process:
                     self.logger.info("Running evaluation...")
 
-                eval_metrics = evaluation.estimate_loss(
-                    self.dist_model, self.val_dataloader, num_batches=50
-                )
+                eval_metrics = self.evaluate()
 
                 # Check if best model
                 val_loss = eval_metrics["val/loss"]
-                is_best = self.metrics_tracker.update_best("val_loss", val_loss)
+                is_best = val_loss < self.state.best_val_loss
 
                 if self.is_main_process:
                     self.logger.info(
@@ -302,6 +388,12 @@ class LLMTrainer:
                 # Update state
                 if val_loss < self.state.best_val_loss:
                     self.state.best_val_loss = val_loss
+
+                # Log eval metrics to W&B
+                if self.config.wandb_logging.enabled and (
+                    not self.config.wandb_logging.rank_zero_only or self.is_main_process
+                ):
+                    wandb.log(eval_metrics, step=self.state.iteration)
 
             # Synchronize across processes
             torch_utils.barrier()
@@ -344,3 +436,14 @@ class LLMTrainer:
 
         if self.is_main_process:
             self.logger.info(f"Loaded checkpoint at step {self.state.iteration}")
+
+    def cleanup(self) -> None:
+        """Clean up resources after training."""
+        # Finish wandb run if it was initialized
+        if self.config.wandb_logging.enabled and (
+            not self.config.wandb_logging.rank_zero_only or self.is_main_process
+        ):
+            wandb.finish()
+
+        if self.is_main_process:
+            self.logger.info("Trainer cleanup complete")

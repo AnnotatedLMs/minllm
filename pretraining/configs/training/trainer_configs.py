@@ -12,6 +12,7 @@ from pretraining.configs.training import checkpointer_configs
 from pretraining.configs.training import data_configs
 from pretraining.configs.training import evaluator_configs
 from pretraining.configs.training import execution_configs
+from pretraining.configs.training import loss_configs
 from pretraining.configs.training import lr_configs
 from pretraining.configs.training import optimizer_configs
 from pretraining.configs.training import system_configs
@@ -32,9 +33,26 @@ class TrainingLoopConfig(base.BaseConfig):
     # 3. Optimization settings (how we update the model)
     optimizer: optimizer_configs.OptimizerConfig
     lr_schedule: lr_configs.LearningRateScheduleConfig
+    loss: loss_configs.LossConfig
 
-    # 4. Training loop control (when to evaluate, checkpoint, and stop)
-    max_iters: int = pydantic.Field(gt=0)  # Total number of training iterations
+    # 4. Training process control
+    # Duration and stopping criteria
+    token_budget: typing.Optional[int] = pydantic.Field(
+        None, gt=0, description="Total number of tokens to train on (primary training constraint)"
+    )
+    max_iters: typing.Optional[int] = pydantic.Field(
+        None, gt=0, description="Maximum training iterations (safety limit, optional)"
+    )
+
+    # Gradient and optimization settings
+    gradient_accumulation_steps: int = pydantic.Field(
+        gt=0, default=1, description="Number of batches to accumulate before updating weights"
+    )
+    mixed_precision: bool = pydantic.Field(
+        False, description="Whether to use automatic mixed precision (AMP) training"
+    )
+
+    # Evaluation and checkpointing
     evaluation: evaluator_configs.EvaluatorConfig
     checkpoint: checkpointer_configs.CheckpointerConfig
 
@@ -53,6 +71,10 @@ class TrainingLoopConfig(base.BaseConfig):
     moe_training: typing.Optional[architecture_training_configs.MoETrainingConfig] = (
         None  # For MoE models
     )
-    mtp_training: typing.Optional[
-        architecture_training_configs.MultiTokenPredictionTrainingConfig
-    ] = None  # For multi-token prediction
+
+    @pydantic.model_validator(mode="after")
+    def validate_stopping_criteria(self):
+        """Ensure at least one stopping criterion is set."""
+        if self.token_budget is None and self.max_iters is None:
+            raise ValueError("Must set either token_budget or max_iters (preferably token_budget)")
+        return self

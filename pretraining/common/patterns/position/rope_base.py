@@ -52,6 +52,10 @@ class BaseRoPE(nn.Module):
         # Compute and store inverse frequencies
         inv_freq: jaxtyping.Float[torch.Tensor, "dim_half"]
         inv_freq = self._compute_inv_freq(dim, config.theta)
+        # register_buffer vs nn.Parameter because:
+        # inv_freq is precomputed and fixed - not learned during training
+        # buffers are saved/loaded with the model but not updated by optimizer
+        # buffers move with the model to the correct device automatically
         self.register_buffer("inv_freq", inv_freq)
 
     def _compute_inv_freq(

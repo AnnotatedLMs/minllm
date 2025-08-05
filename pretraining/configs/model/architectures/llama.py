@@ -3,6 +3,7 @@ import pydantic
 import yaml
 
 # Project
+from pretraining.configs.model import transformer
 from pretraining.configs.model.architectures import base
 from pretraining.configs.model.components import attention
 from pretraining.configs.model.components import normalization
@@ -12,7 +13,7 @@ from pretraining.configs.model.components import position
 class Llama3Config(base.BaseLLMConfig):
     """Configuration for Llama architecture (3.1 and similar)."""
 
-    # No additional fields - Llama uses all base fields
+    transformer: transformer.Llama3TransformerConfig
 
     @pydantic.model_validator(mode="after")
     def validate_config(self) -> "Llama3Config":
@@ -59,5 +60,8 @@ class Llama3Config(base.BaseLLMConfig):
         if "scaling" in rope_dict and rope_dict["scaling"] is not None:
             rope_dict["scaling"] = position.RoPEScalingConfig(**rope_dict["scaling"])
         trans_dict["rope"] = position.RoPEConfig(**rope_dict)
+
+        # Create Llama3TransformerConfig
+        model_dict["transformer"] = transformer.Llama3TransformerConfig(**trans_dict)
 
         return cls(**model_dict)

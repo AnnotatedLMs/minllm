@@ -1,3 +1,6 @@
+# Standard Library
+import typing
+
 # Third Party
 import torch.nn as nn
 
@@ -28,15 +31,12 @@ class FeedForward(ffn.BaseFeedForward):
         self,
         hidden_dim: int,
         intermediate_dim: int,
-        dropout: float = 0.0,
+        dropout: typing.Optional[float] = None,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.intermediate_dim = intermediate_dim
-        self.dropout = dropout
-
-        if dropout > 0:
-            self.dropout_layer = nn.Dropout(dropout)
+        self.ffn_dropout = nn.Dropout(dropout) if dropout is not None else None
 
     def _get_activation(self, activation: str) -> nn.Module:
         """Get activation function by name."""

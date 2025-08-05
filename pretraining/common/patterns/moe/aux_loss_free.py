@@ -13,13 +13,14 @@ from pretraining.common.patterns.moe import base
 
 class AuxLossFreeMoE(base.MoE):
     """
-    Auxiliary-loss-free MoE pattern.
+    DeepSeek-V3 MoE implementation.
 
-    Used by: DeepSeek-V3.
-    Pattern: Shared expert + Routed experts + Dynamic bias adjustment
-
-    Uses bias terms and online updates instead of auxiliary loss for load balancing.
-    Includes a shared expert that processes all tokens to maintain baseline capacity.
+    Pattern: Shared expert + Routed experts with centroid-based affinity
+    Features:
+    - Shared expert processes all tokens
+    - Routed experts selected via centroid affinity scores
+    - Dynamic bias adjustment for load balancing (routing only)
+    - Complementary sequence-wise auxiliary loss
     """
 
     def __init__(
@@ -29,7 +30,7 @@ class AuxLossFreeMoE(base.MoE):
         num_experts_per_token: int,
         intermediate_dim: typing.Optional[int] = None,
         shared_expert_ratio: float = 0.1,
-        dropout: float = 0.0,
+        dropout: typing.Optional[float] = None,
     ):
         if intermediate_dim is None:
             intermediate_dim = 4 * hidden_dim
@@ -37,7 +38,11 @@ class AuxLossFreeMoE(base.MoE):
         super().__init__(hidden_dim, num_experts, num_experts_per_token, intermediate_dim, dropout)
 
         self.shared_expert_ratio = shared_expert_ratio
-        self.gate = nn.Linear(hidden_dim, num_experts, bias=False)
+
+        # Expert centroids for affinity computation (e_i in the paper)
+        self.expert_centroids = nn.Parameter(torch.randn(num_experts, hidden_dim))
+
+        # Bias terms for load balancing (b_i in the paper)
         self.gate_bias = nn.Parameter(torch.zeros(num_experts))
 
         # Shared expert that always processes all tokens
@@ -52,50 +57,65 @@ class AuxLossFreeMoE(base.MoE):
         self.register_buffer("expert_load", torch.zeros(num_experts))
         self.bias_update_speed = 0.001
 
-    def _compute_gating_with_bias(
+    def _create_expert(self, hidden_dim: int, intermediate_dim: int) -> nn.Module:
+        """
+        Create a single expert network for DeepSeek-V3.
+
+        Uses standard FFN with GELU activation and optional dropout.
+        """
+        layers = [
+            nn.Linear(hidden_dim, intermediate_dim),
+            nn.GELU(),
+            nn.Linear(intermediate_dim, hidden_dim),
+        ]
+
+        if self.dropout is not None:
+            layers.append(nn.Dropout(self.dropout))
+
+        return nn.Sequential(*layers)
+
+    def _compute_centroid_affinity(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq num_experts"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len num_experts"]:
         """
-        Compute gating scores with load balancing bias.
+        Compute affinity scores between tokens and expert centroids.
 
-        Override: DeepSeek adds bias and uses sigmoid activation.
+        DeepSeek specific: s_i,t = Sigmoid(u_t^T * e_i)
+        where u_t is the token representation and e_i is the expert centroid.
         """
-        # Linear gating scores
-        scores: jaxtyping.Float[torch.Tensor, "batch seq num_experts"]
-        scores = self._compute_gating_scores(x)
+        # Compute dot product between tokens and expert centroids
+        # x: [batch, seq, d_model], expert_centroids: [num_experts, d_model]
+        dot_products: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts"]
+        dot_products = torch.matmul(x, self.expert_centroids.T)
 
-        # Add load balancing bias
-        scores_with_bias: jaxtyping.Float[torch.Tensor, "batch seq num_experts"]
-        scores_with_bias = scores + self.gate_bias
+        # Apply sigmoid activation
+        affinity_scores: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts"]
+        affinity_scores = F.sigmoid(dot_products)
 
-        # Apply sigmoid for stable gradients
-        gating_scores: jaxtyping.Float[torch.Tensor, "batch seq num_experts"]
-        gating_scores = F.sigmoid(scores_with_bias)
-
-        return gating_scores
+        return affinity_scores
 
     def _normalize_expert_weights(
         self,
-        scores: jaxtyping.Float[torch.Tensor, "batch seq k"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq k"]:
+        scores: jaxtyping.Float[torch.Tensor, "batch seq_len k"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len k"]:
         """
         Normalize expert weights to sum to 1.
 
         Override: DeepSeek uses sum normalization instead of softmax.
         """
         # Sum normalization
-        score_sum: jaxtyping.Float[torch.Tensor, "batch seq 1"]
+        score_sum: jaxtyping.Float[torch.Tensor, "batch seq_len 1"]
         score_sum = scores.sum(dim=-1, keepdim=True)
 
-        weights: jaxtyping.Float[torch.Tensor, "batch seq k"]
+        weights: jaxtyping.Float[torch.Tensor, "batch seq_len k"]
         weights = scores / (score_sum + 1e-6)
 
         return weights
 
     def _compute_expert_load(
         self,
-        expert_indices: jaxtyping.Int[torch.Tensor, "batch seq k"],
+        expert_indices: jaxtyping.Int[torch.Tensor, "batch seq_len k"],
     ) -> jaxtyping.Float[torch.Tensor, "num_experts"]:
         """Compute how many tokens are assigned to each expert."""
         # One-hot encode expert assignments
@@ -110,7 +130,7 @@ class AuxLossFreeMoE(base.MoE):
 
     def _update_load_balancing_bias(
         self,
-        expert_indices: jaxtyping.Int[torch.Tensor, "batch seq k"],
+        expert_indices: jaxtyping.Int[torch.Tensor, "batch seq_len k"],
     ) -> None:
         """
         Update bias terms based on expert load (no auxiliary loss).
@@ -135,26 +155,62 @@ class AuxLossFreeMoE(base.MoE):
 
     def _apply_shared_expert(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
         Apply shared expert to all tokens.
 
         DeepSeek specific: Shared expert with scaling.
         """
-        shared_output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        shared_output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         shared_output = self.shared_expert(x)
 
         # Scale by shared expert ratio
-        scaled_output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        scaled_output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         scaled_output = shared_output * self.shared_expert_ratio
 
         return scaled_output
 
+    def _compute_auxiliary_loss(
+        self,
+        expert_indices: jaxtyping.Int[torch.Tensor, "batch seq_len k"],
+        affinity_scores: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts"],
+    ) -> torch.Tensor:
+        """Compute complementary sequence-wise auxiliary loss."""
+        batch_size, seq_len, k = expert_indices.shape
+
+        # Compute f_i: fraction of tokens assigned to each expert
+        one_hot: jaxtyping.Float[torch.Tensor, "batch seq k num_experts"]
+        one_hot = F.one_hot(expert_indices, self.num_experts).float()
+
+        indicator: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts"]
+        indicator = one_hot.sum(dim=2)
+
+        f_i: jaxtyping.Float[torch.Tensor, "batch num_experts"]
+        f_i = indicator.sum(dim=1) * (self.num_experts / (self.num_experts_per_token * seq_len))
+
+        # Compute P_i: average probability assigned to each expert
+        affinity_sum: jaxtyping.Float[torch.Tensor, "batch seq_len 1"]
+        affinity_sum = affinity_scores.sum(dim=2, keepdim=True)
+
+        s_prime: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts"]
+        s_prime = affinity_scores / (affinity_sum + 1e-10)
+
+        P_i: jaxtyping.Float[torch.Tensor, "batch num_experts"]
+        P_i = s_prime.mean(dim=1)
+
+        # Balance loss: sum(f_i * P_i)
+        balance_loss: jaxtyping.Float[torch.Tensor, "batch"]
+        balance_loss = (f_i * P_i).sum(dim=1)
+
+        aux_loss: torch.Tensor = balance_loss.mean()
+
+        return aux_loss
+
     def forward(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
         Apply auxiliary-loss-free MoE.
 
@@ -167,21 +223,34 @@ class AuxLossFreeMoE(base.MoE):
         6. Update load balancing bias (no aux loss)
         7. Combine shared and routed expert outputs
         """
-        shared_output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        shared_output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         shared_output = self._apply_shared_expert(x)
 
-        scores: jaxtyping.Float[torch.Tensor, "batch seq num_experts"]
-        scores = self._compute_gating_with_bias(x)
+        # Compute affinity scores
+        affinity_scores: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts"]
+        affinity_scores = self._compute_centroid_affinity(x)
 
-        top_k_scores: jaxtyping.Float[torch.Tensor, "batch seq k"]
-        top_k_indices: jaxtyping.Int[torch.Tensor, "batch seq k"]
-        top_k_scores, top_k_indices = self._select_top_k_experts(scores, self.num_experts_per_token)
+        # Add bias for routing only
+        scores_with_bias: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts"]
+        scores_with_bias = affinity_scores + self.gate_bias
 
-        expert_weights: jaxtyping.Float[torch.Tensor, "batch seq k"]
+        # Select top-k experts based on biased scores
+        _, top_k_indices = self._select_top_k_experts(scores_with_bias, self.num_experts_per_token)
+
+        # Extract affinity scores for selected experts (without bias)
+        batch_size, seq_len, _ = x.shape
+        batch_indices = torch.arange(batch_size, device=x.device).unsqueeze(1).unsqueeze(2)
+        seq_indices = torch.arange(seq_len, device=x.device).unsqueeze(0).unsqueeze(2)
+
+        top_k_scores: jaxtyping.Float[torch.Tensor, "batch seq_len k"]
+        top_k_scores = affinity_scores[batch_indices, seq_indices, top_k_indices]
+
+        # Normalize weights
+        expert_weights: jaxtyping.Float[torch.Tensor, "batch seq_len k"]
         expert_weights = self._normalize_expert_weights(top_k_scores)
 
         # Initialize routed output
-        routed_output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        routed_output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         routed_output = torch.zeros_like(x)
 
         # Process top-k experts for each token
@@ -201,27 +270,31 @@ class AuxLossFreeMoE(base.MoE):
 
                 if mask.any():
                     # Get tokens for this expert
-                    expert_input: jaxtyping.Float[torch.Tensor, "num_tokens d_model"]
+                    expert_input: jaxtyping.Float[torch.Tensor, "num_tokens hidden_dim"]
                     expert_input = x[mask]
 
                     # Apply expert
-                    expert_output: jaxtyping.Float[torch.Tensor, "num_tokens d_model"]
+                    expert_output: jaxtyping.Float[torch.Tensor, "num_tokens hidden_dim"]
                     expert_output = self.experts[expert_idx](expert_input)
 
                     # Scale by gating weight
                     weights: jaxtyping.Float[torch.Tensor, "num_tokens 1"]
                     weights = expert_weight_per_token[mask].unsqueeze(-1)
 
-                    weighted_output: jaxtyping.Float[torch.Tensor, "num_tokens d_model"]
+                    weighted_output: jaxtyping.Float[torch.Tensor, "num_tokens hidden_dim"]
                     weighted_output = expert_output * weights
 
                     # Add to output
                     routed_output[mask] += weighted_output
 
         if self.training:
+            # Update load balancing bias
             self._update_load_balancing_bias(top_k_indices)
 
-        output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+            # Compute auxiliary loss
+            self._aux_loss = self._compute_auxiliary_loss(top_k_indices, affinity_scores)
+
+        output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         output = shared_output + routed_output
 
         return output

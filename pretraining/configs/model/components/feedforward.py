@@ -12,7 +12,6 @@ class FFNConfig(base.BaseConfig):
     activation: typing.Literal["gelu", "relu", "silu", "swish"]
 
     # Other parameters (required fields)
-    dropout: float
     bias: bool
 
     # Dimension configuration (optional fields)

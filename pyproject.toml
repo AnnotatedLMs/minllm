@@ -9,6 +9,7 @@ dependencies = [
     "datasets>=3.6.0",
     "einops>=0.8.1",
     "jaxtyping>=0.3.2",
+    "peft>=0.17.0",
     "pytest>=8.4.1",
     "tiktoken>=0.9.0",
     "torch>=2.7.1",

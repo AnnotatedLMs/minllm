@@ -7,7 +7,6 @@ import torch
 import torch.nn as nn
 
 # Project
-from pretraining.common.base import inputs
 from pretraining.common.base import llm
 from pretraining.common.base import outputs
 from pretraining.common.patterns.blocks import deepseek3 as deepseek3_blocks
@@ -45,8 +44,6 @@ class DeepSeek3(llm.BaseLLM):
         hidden_dim: int,
         n_layers: int,
         block_size: int,
-        # Token embedding params
-        embedding_dropout: float = 0.0,
         # RoPE params
         rope_theta: float = 10000.0,
         rope_dim: int = 64,  # Partial RoPE dimension for MLA
@@ -65,17 +62,15 @@ class DeepSeek3(llm.BaseLLM):
         lm_head_bias: bool = False,
         # Multi-token prediction params (required for DeepSeek)
         mtp_n_predict: int = 3,
-        mtp_dropout_rate: float = 0.1,
     ):
         """
         Initialize DeepSeek3 model.
 
         Args:
             vocab_size: Size of vocabulary
-            hidden_dim: Hidden dimension (d_model)
+            hidden_dim: Hidden dimension (hidden_dim)
             n_layers: Number of transformer layers
             block_size: Maximum sequence length
-            embedding_dropout: Dropout for embeddings
             rope_theta: Base frequency for RoPE
             rope_dim: Dimension for partial RoPE (MLA specific)
             num_heads: Number of attention heads
@@ -89,7 +84,6 @@ class DeepSeek3(llm.BaseLLM):
             num_experts_per_token: How many experts each token uses
             lm_head_bias: Whether to use bias in lm_head
             mtp_n_predict: Number of future tokens to predict
-            mtp_dropout_rate: Dropout rate for MTP heads
         """
         super().__init__()
 
@@ -106,7 +100,7 @@ class DeepSeek3(llm.BaseLLM):
         )
 
         # Dropout for embeddings
-        self.embed_dropout = nn.Dropout(embedding_dropout)
+        self.embedding_dropout = nn.Dropout(dropout) if dropout is not None else None
 
         # RoPE module - Partial RoPE for MLA
         rope_config = position.RoPEConfig(theta=rope_theta)
@@ -147,7 +141,7 @@ class DeepSeek3(llm.BaseLLM):
             hidden_dim=hidden_dim,
             vocab_size=vocab_size,
             depth=mtp_n_predict,
-            dropout_rate=mtp_dropout_rate,
+            dropout=dropout,
         )
 
     @classmethod
@@ -165,8 +159,6 @@ class DeepSeek3(llm.BaseLLM):
             hidden_dim=config.transformer.hidden_dim,
             n_layers=config.transformer.n_layers,
             block_size=config.transformer.block_size,
-            # Token embedding params
-            embedding_dropout=config.token_embedding.embedding_dropout,
             # RoPE params
             rope_theta=config.transformer.rope.theta,
             rope_dim=attn_config.rope_dim,
@@ -185,17 +177,16 @@ class DeepSeek3(llm.BaseLLM):
             lm_head_bias=config.output_head.lm_head_bias,
             # MTP params (required)
             mtp_n_predict=config.mtp.n_predict,
-            mtp_dropout_rate=config.mtp.dropout_rate,
         )
 
     def _apply_transformer_blocks(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
         attention_mask: typing.Optional[torch.Tensor] = None,
         output_hidden_states: bool = False,
     ) -> typing.Tuple[
-        jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-        typing.Optional[typing.List[jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]]],
+        jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+        typing.Optional[typing.List[jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]]],
         typing.List[torch.Tensor],  # Auxiliary losses
     ]:
         """Pass input through all transformer blocks."""
@@ -206,7 +197,7 @@ class DeepSeek3(llm.BaseLLM):
         aux_losses = []
 
         # Process through each block
-        hidden: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"] = x
+        hidden: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"] = x
         for i, block in enumerate(self.blocks):
             if output_hidden_states:
                 all_hidden_states.append(hidden)
@@ -218,15 +209,13 @@ class DeepSeek3(llm.BaseLLM):
             )
 
             # Collect auxiliary loss from MoE if present
-            if (
-                hasattr(block, "moe")
-                and hasattr(block.moe, "aux_loss")
-                and block.moe.aux_loss is not None
-            ):
-                aux_losses.append(block.moe.aux_loss)
+            if hasattr(block, "moe") and hasattr(block.moe, "get_auxiliary_loss"):
+                aux_loss = block.moe.get_auxiliary_loss()
+                if aux_loss is not None:
+                    aux_losses.append(aux_loss)
 
         # Apply final norm
-        normalized: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
+        normalized: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         normalized = self.norm(hidden)
 
         if output_hidden_states:
@@ -236,204 +225,124 @@ class DeepSeek3(llm.BaseLLM):
 
     def _compute_logits(
         self,
-        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
+        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len vocab"]:
         """Compute output logits from hidden states."""
         # DeepSeek uses separate output projection
-        logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"]
+        logits: jaxtyping.Float[torch.Tensor, "batch seq_len vocab"]
         logits = self.lm_head(hidden_states)
         return logits
 
     def _compute_mtp_logits(
         self,
-        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-    ) -> typing.Optional[typing.List[jaxtyping.Float[torch.Tensor, "batch seq vocab"]]]:
-        """Compute multi-token prediction logits if enabled."""
-        if self.mtp_heads is not None:
-            return self.mtp_heads(hidden_states)
-        return None
+        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> typing.List[jaxtyping.Float[torch.Tensor, "batch seq_len vocab"]]:
+        """Compute multi-token prediction logits."""
+        return self.mtp_heads(hidden_states)
 
-    def training_forward(
+    def forward(
         self,
-        training_inputs: inputs.TrainingInputs,
-    ) -> outputs.TrainingOutput:
+        input_ids: jaxtyping.Int[torch.Tensor, "batch seq"],
+        attention_mask: typing.Optional[torch.Tensor] = None,
+    ) -> outputs.ForwardOutput:
         """
-        Forward pass for training.
+        Unified forward pass for both training and inference.
 
         Args:
-            training_inputs: TrainingInputs containing:
-                - input_ids: Input token indices [batch, seq]
-                - labels: Target tokens for loss computation
-                - attention_mask: Optional attention mask
-                - mtp_targets: Optional multi-token prediction targets [batch, depth, seq]
+            input_ids: Input token indices [batch, seq]
+            attention_mask: Optional attention mask
 
         Returns:
-            TrainingOutput containing:
-                - loss: Cross-entropy loss for next-token prediction
-                - mtp_losses: List of losses for multi-token predictions (if MTP enabled)
-                - aux_losses: List of auxiliary losses from MoE (if present)
+            ForwardOutput containing:
+                - logits: Main output logits
+                - mtp_logits: MTP logits (only during training)
+                - aux_losses: MoE auxiliary losses (only during training)
         """
-        # 1. Embed tokens and apply dropout
-        x: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        x = self.token_embeddings(training_inputs.input_ids)
-        x = self.embed_dropout(x)
+        # 1. Token embeddings with dropout
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
+        x = self.token_embeddings(input_ids)
+        # Note: PyTorch's Train/Eval Mode automatically handles dropout
+        x = self._maybe_apply_dropout(x, self.embedding_dropout)
 
         # 2. Apply transformer blocks
-        hidden_states, all_hidden_states, aux_losses = self._apply_transformer_blocks(
-            x,
-            attention_mask=training_inputs.attention_mask,
-            output_hidden_states=False,
-        )
+        aux_losses = []
+        hidden_states = x
+        for block in self.blocks:
+            hidden_states = block(hidden_states, attention_mask=attention_mask)
 
-        # 3. Compute logits
+            # Collect auxiliary losses only during training
+            if self.training and hasattr(block, "moe") and hasattr(block.moe, "get_auxiliary_loss"):
+                aux_loss = block.moe.get_auxiliary_loss()
+                if aux_loss is not None:
+                    aux_losses.append(aux_loss)
+
+        # 3. Final layer norm
+        hidden_states = self.norm(hidden_states)
+
+        # 4. Compute main logits
         logits = self._compute_logits(hidden_states)
 
-        # 4. Compute MTP logits if enabled
-        mtp_logits = self._compute_mtp_logits(hidden_states)
+        # 5. Compute MTP logits only during training
+        mtp_logits = None
+        if self.training:
+            mtp_logits = self._compute_mtp_logits(hidden_states)
 
-        # 5. Compute loss
-        loss = self.compute_loss(logits, training_inputs.labels, aux_losses=aux_losses)
-
-        # 6. Compute MTP losses if targets provided
-        mtp_losses = None
-        if mtp_logits is not None and training_inputs.mtp_targets is not None:
-            # Compute individual MTP losses for each depth
-            mtp_losses = []
-            for d in range(len(mtp_logits)):
-                depth_logits = mtp_logits[d]
-                depth_targets = training_inputs.mtp_targets[:, d, :]
-
-                # Flatten for loss computation
-                depth_logits_flat = depth_logits.reshape(-1, depth_logits.size(-1))
-                depth_targets_flat = depth_targets.reshape(-1)
-
-                # Compute loss for this depth
-                depth_loss = nn.functional.cross_entropy(
-                    depth_logits_flat, depth_targets_flat, ignore_index=-100
-                )
-                mtp_losses.append(depth_loss)
-
-        # Return TrainingOutput
-        return outputs.TrainingOutput(
-            loss=loss,
-            mtp_losses=mtp_losses,
-            aux_losses=aux_losses,
+        # 6. Return ForwardOutput
+        return outputs.ForwardOutput(
+            logits=logits, mtp_logits=mtp_logits, aux_losses=aux_losses if aux_losses else None
         )
 
     @torch.no_grad()
-    def inference_forward(
+    def generate(
         self,
-        inference_inputs: inputs.InferenceInputs,
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
-        """
-        Forward pass for inference/generation.
-
-        Note: DeepSeek doesn't use KV cache.
-
-        Args:
-            inference_inputs: InferenceInputs containing:
-                - input_ids: Input token indices [batch, seq]
-                - attention_mask: Optional attention mask
-                - position_offset: Not used for DeepSeek3
-
-        Returns:
-            Logits tensor [batch, seq, vocab]
-        """
-        # 1. Embed tokens (no dropout during inference)
-        x: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"]
-        x = self.token_embeddings(inference_inputs.input_ids)
-
-        # 2. Apply transformer blocks
-        hidden_states, _, _ = self._apply_transformer_blocks(
-            x,
-            attention_mask=inference_inputs.attention_mask,
-            output_hidden_states=False,
-        )
-
-        # 3. Compute logits
-        logits = self._compute_logits(hidden_states)
-
-        return logits
-
-    def _compute_mtp_loss(
-        self,
-        mtp_logits: typing.List[jaxtyping.Float[torch.Tensor, "batch seq vocab"]],
-        mtp_targets: jaxtyping.Int[torch.Tensor, "batch depth seq"],
-        ignore_index: int = -100,
-    ) -> torch.Tensor:
-        """Compute multi-token prediction loss.
-
-        Args:
-            mtp_logits: List of logits for each depth
-            mtp_targets: Target tokens for each depth [batch, depth, seq]
-            ignore_index: Index to ignore in loss
-
-        Returns:
-            Average MTP loss across all depths
-        """
-        mtp_losses = []
-        batch_size, depth, seq_len = mtp_targets.shape
-
-        for d in range(depth):
-            if d < len(mtp_logits):
-                # Get logits for this depth
-                depth_logits = mtp_logits[d]
-
-                # Get targets for this depth
-                depth_targets = mtp_targets[:, d, :]
-
-                # Flatten for loss computation
-                depth_logits = depth_logits.reshape(-1, depth_logits.size(-1))
-                depth_targets = depth_targets.reshape(-1)
-
-                # Compute loss for this depth
-                depth_loss = nn.functional.cross_entropy(
-                    depth_logits, depth_targets, ignore_index=ignore_index
-                )
-                mtp_losses.append(depth_loss)
-
-        # Average losses across depths
-        if mtp_losses:
-            return sum(mtp_losses) / len(mtp_losses)
-        else:
-            return torch.tensor(0.0, device=mtp_targets.device)
-
-    def compute_loss(
-        self,
-        logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"],
-        targets: jaxtyping.Int[torch.Tensor, "batch seq"],
-        ignore_index: int = -100,
-        aux_losses: typing.Optional[typing.List[torch.Tensor]] = None,
+        idx: jaxtyping.Int[torch.Tensor, "batch seq"],
+        max_new_tokens: int,
+        temperature: float = 1.0,
+        top_k: typing.Optional[int] = None,
         **kwargs,
-    ) -> torch.Tensor:
-        """Compute cross-entropy loss for language modeling with auxiliary losses."""
-        # Shift for next-token prediction
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = targets[..., 1:].contiguous()
-
-        # Flatten for loss computation
-        shift_logits = shift_logits.view(-1, shift_logits.size(-1))
-        shift_labels = shift_labels.view(-1)
-
-        # Compute main loss
-        main_loss = nn.functional.cross_entropy(
-            shift_logits, shift_labels, ignore_index=ignore_index
-        )
-
-        # Add auxiliary losses from MoE
-        total_loss = main_loss
-        if aux_losses:
-            aux_loss = sum(aux_losses) / len(aux_losses)
-            total_loss = main_loss + aux_loss
-
-        return total_loss
-
-    def get_num_params(self) -> int:
+    ) -> jaxtyping.Int[torch.Tensor, "batch new_seq"]:
         """
-        Get number of parameters in the model.
+        Generate tokens autoregressively with DeepSeek3.
+
+        Note: This implementation uses the main prediction head only.
+        Future versions could leverage MTP predictions for improved generation.
+
+        Args:
+            idx: Initial token indices [batch, seq]
+            max_new_tokens: Number of tokens to generate
+            temperature: Sampling temperature
+            top_k: If set, only sample from top k most likely tokens
+            **kwargs: Additional generation arguments
 
         Returns:
-            Total number of parameters
+            Generated token indices [batch, seq + max_new_tokens]
         """
-        n_params = sum(p.numel() for p in self.parameters())
-        return n_params
+        for _ in range(max_new_tokens):
+            # Crop context if it exceeds block_size
+            idx_cond = idx if idx.size(1) <= self.block_size else idx[:, -self.block_size :]
+
+            # Forward the model to get logits
+            model_output = self.forward(
+                input_ids=idx_cond,
+                attention_mask=kwargs.get("attention_mask"),
+            )
+            logits = model_output.logits
+
+            # Focus on the last token logits
+            logits = logits[:, -1, :] / temperature
+
+            # Apply top-k filtering if specified
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float("Inf")
+
+            # Apply softmax to get probabilities
+            probs = torch.nn.functional.softmax(logits, dim=-1)
+
+            # Sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1)
+
+            # Append to the sequence
+            idx = torch.cat((idx, idx_next), dim=1)
+
+        return idx

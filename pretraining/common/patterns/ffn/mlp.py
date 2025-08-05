@@ -48,50 +48,50 @@ class MLP(base.FeedForward):
 
     def _expand_to_intermediate(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq intermediate"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]:
         """
         Expand input to intermediate dimension.
 
         This is the first linear transformation that increases dimensionality,
         giving the model more capacity to learn complex features.
         """
-        expanded: jaxtyping.Float[torch.Tensor, "batch seq intermediate"]
+        expanded: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]
         expanded = self.c_fc(x)
         return expanded
 
     def _apply_activation(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq intermediate"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq intermediate"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]:
         """
         Apply activation function.
 
         GPT-2 uses GELU for smooth, differentiable non-linearity,
         enabling gradient flow while introducing necessary non-linearity.
         """
-        activated: jaxtyping.Float[torch.Tensor, "batch seq intermediate"]
+        activated: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]
         activated = self.activation(x)
         return activated
 
     def _project_back(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq intermediate"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
         Project back to model dimension.
 
         This reduces dimensionality back to the original size,
         forcing the model to compress learned features.
         """
-        projected: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        projected: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         projected = self.c_proj(x)
         return projected
 
     def forward(
         self,
-        x: jaxtyping.Float[torch.Tensor, "batch seq d_model"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq d_model"]:
+        x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
         Apply standard MLP transformation.
 
@@ -102,16 +102,16 @@ class MLP(base.FeedForward):
         4. Apply dropout for regularization - improves generalization during training
         """
 
-        intermediate: jaxtyping.Float[torch.Tensor, "batch seq intermediate"]
+        intermediate: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]
         intermediate = self._expand_to_intermediate(x)
 
-        activated: jaxtyping.Float[torch.Tensor, "batch seq intermediate"]
+        activated: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"]
         activated = self._apply_activation(intermediate)
 
-        projected: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
+        projected: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         projected = self._project_back(activated)
 
-        output: jaxtyping.Float[torch.Tensor, "batch seq d_model"]
-        output = self.dropout_layer(projected) if self.dropout > 0 else projected
+        output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
+        output = self._maybe_apply_dropout(projected, self.ffn_dropout)
 
         return output

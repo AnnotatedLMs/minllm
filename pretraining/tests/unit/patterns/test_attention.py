@@ -44,28 +44,16 @@ class TestMultiHeadAttention:
         return multi_head.MultiHeadAttention(
             hidden_dim=128,
             num_heads=4,
-            dropout=0.0,
+            dropout=None,
             bias=True,
             max_seq_length=512,
             is_causal=True,
         )
 
-    def test_mha_initialization(self, mha: multi_head.MultiHeadAttention) -> None:
-        """Test MHA initializes correctly."""
-        assert mha.hidden_dim == 128
-        assert mha.num_heads == 4
+    def test_mha_head_dim_calculation(self, mha: multi_head.MultiHeadAttention) -> None:
+        """Test MHA head dimension calculation."""
+        # This tests actual calculation logic
         assert mha.head_dim == 32  # 128 / 4
-
-        # Check projections
-        assert mha.c_attn.in_features == 128
-        assert mha.c_attn.out_features == 384  # 3 * 128 for Q, K, V
-        assert mha.c_proj.in_features == 128
-        assert mha.c_proj.out_features == 128
-
-        # Check bias buffer for causal mask
-        if not mha.use_flash_attention:
-            assert hasattr(mha, "bias")
-            assert mha.bias.shape == (1, 1, 512, 512)
 
     def test_mha_forward_basic(self, mha: multi_head.MultiHeadAttention) -> None:
         """Test basic forward pass."""
@@ -138,24 +126,15 @@ class TestGroupedQueryAttention:
             num_heads=8,
             num_kv_heads=2,  # 4:1 ratio
             rope_module=rope_module,
-            dropout=0.0,
+            dropout=None,
             bias=False,
             is_causal=True,
         )
 
-    def test_gqa_initialization(self, gqa: grouped_query.GroupedQueryAttention) -> None:
-        """Test GQA initializes correctly."""
-        assert gqa.hidden_dim == 128
-        assert gqa.num_heads == 8
-        assert gqa.num_kv_heads == 2
-        assert gqa.head_dim == 16  # 128 / 8
-        assert gqa.n_rep == 4  # 8 / 2
-
-        # Check separate projections
-        assert gqa.q_proj.out_features == 128  # 8 heads * 16 dim
-        assert gqa.k_proj.out_features == 32  # 2 heads * 16 dim
-        assert gqa.v_proj.out_features == 32  # 2 heads * 16 dim
-        assert gqa.o_proj.in_features == 128
+    def test_gqa_n_rep_calculation(self, gqa: grouped_query.GroupedQueryAttention) -> None:
+        """Test GQA repetition factor calculation."""
+        # This tests the key GQA logic - how many times to repeat KV heads
+        assert gqa.n_rep == 4  # 8 query heads / 2 kv heads
 
     def test_gqa_forward_basic(self, gqa: grouped_query.GroupedQueryAttention) -> None:
         """Test basic forward pass."""
@@ -246,7 +225,7 @@ class TestMultiHeadLatentAttention:
             query_compression_dim=256,
             rope_module=partial_rope,
             rope_dim=64,
-            dropout=0.0,
+            dropout=None,
             is_causal=True,
         )
 

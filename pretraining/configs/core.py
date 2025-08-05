@@ -40,13 +40,4 @@ class TrainerConfig(base.BaseConfig):
         if self.llm.transformer.moe is None and self.training.moe_training is not None:
             raise ValueError("Model has no MoE config but moe_training config is provided")
 
-        # Validate MTP training config presence (only DeepSeek has MTP)
-        if hasattr(self.llm, "mtp"):
-            if self.llm.mtp is not None and self.training.mtp_training is None:
-                raise ValueError("Model has MTP config but mtp_training config is missing")
-            if self.llm.mtp is None and self.training.mtp_training is not None:
-                raise ValueError("Model has no MTP config but mtp_training config is provided")
-        elif self.training.mtp_training is not None:
-            raise ValueError("Model does not support MTP but mtp_training config is provided")
-
         return self
