@@ -37,21 +37,28 @@ class RoPEBase(nn.Module):
     - PartialRoPE: Apply to subset of dimensions
     """
 
-    def __init__(self, dim: int, config: position.RoPEConfig):
+    def __init__(
+        self,
+        dim: int,
+        theta: float = 10000.0,
+        scaling: typing.Optional[position.RoPEScalingConfig] = None,
+    ):
         """
         Initialize base RoPE.
 
         Args:
             dim: Dimension to apply RoPE to (must be even)
-            config: RoPE configuration with theta
+            theta: Base frequency for RoPE
+            scaling: Optional RoPE scaling configuration
         """
         super().__init__()
         self.dim = dim
-        self.config = config
+        self.theta = theta
+        self.scaling = scaling
 
         # Compute and store inverse frequencies
         inv_freq: jaxtyping.Float[torch.Tensor, "dim_half"]
-        inv_freq = self._compute_inv_freq(dim, config.theta)
+        inv_freq = self._compute_inv_freq(dim, theta)
         # register_buffer vs nn.Parameter because:
         # inv_freq is precomputed and fixed - not learned during training
         # buffers are saved/loaded with the model but not updated by optimizer
@@ -86,8 +93,8 @@ class RoPEBase(nn.Module):
             inv_freq = self.inv_freq
 
         # Apply scaling if configured
-        if self.config.scaling is not None:
-            inv_freq = rope_scaling.apply_rope_scaling(inv_freq, self.config.scaling)
+        if self.scaling is not None:
+            inv_freq = rope_scaling.apply_rope_scaling(inv_freq, self.scaling)
 
         # Create position indices
         positions: jaxtyping.Float[torch.Tensor, "seq_len"]
@@ -123,8 +130,8 @@ class RoPEBase(nn.Module):
             inv_freq = inv_freq.to(device)
 
         # Apply scaling if configured
-        if self.config.scaling is not None:
-            inv_freq = rope_scaling.apply_rope_scaling(inv_freq, self.config.scaling)
+        if self.scaling is not None:
+            inv_freq = rope_scaling.apply_rope_scaling(inv_freq, self.scaling)
 
         # Create positions
         positions: jaxtyping.Float[torch.Tensor, "seq_len"]
@@ -160,14 +167,26 @@ class PrecomputedRoPE(RoPEBase):
     for context length extension beyond training.
     """
 
-    def __init__(self, dim: int, config: position.RoPEConfig, max_seq_len: int = 8192):
+    def __init__(
+        self,
+        dim: int,
+        theta: float = 10000.0,
+        max_seq_len: int = 8192,
+        scaling: typing.Optional[position.RoPEScalingConfig] = None,
+    ):
         """
         Initialize with precomputed frequencies.
 
         Precomputes rotation matrices for all positions at initialization,
         enabling O(1) position encoding during forward passes.
+
+        Args:
+            dim: Dimension to apply RoPE to (must be even)
+            theta: Base frequency for RoPE
+            max_seq_len: Maximum sequence length to precompute
+            scaling: Optional RoPE scaling configuration for extended context
         """
-        super().__init__(dim, config)
+        super().__init__(dim, theta=theta, scaling=scaling)
 
         # Precompute and store frequencies for efficiency
         self.max_seq_len = max_seq_len

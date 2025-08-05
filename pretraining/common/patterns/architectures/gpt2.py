@@ -211,14 +211,10 @@ class GPT2(llm.BaseLLM):
         hidden_states: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
     ) -> jaxtyping.Float[torch.Tensor, "batch seq_len vocab"]:
         """Compute output logits from hidden states."""
-        if hasattr(self.lm_head, "weight"):
-            # Tied embeddings case - use embedding weights transposed
-            logits: jaxtyping.Float[torch.Tensor, "batch seq_len vocab"]
-            logits = torch.matmul(hidden_states, self.lm_head.weight.T)
-        else:
-            # Separate projection case
-            logits = self.lm_head(hidden_states)
-
+        # Tied embeddings: hidden states are projected to vocabulary space using
+        # the same weight matrix as token embeddings (transposed)
+        logits: jaxtyping.Float[torch.Tensor, "batch seq_len vocab"]
+        logits = torch.matmul(hidden_states, self.lm_head.weight.T)
         return logits
 
     def _apply_weight_initialization(
@@ -243,10 +239,8 @@ class GPT2(llm.BaseLLM):
         )
         initializer.initialize(self)
 
-        # GPT-2 specific: Initialize position embeddings separately
-        if hasattr(self, "position_embeddings") and self.position_embeddings is not None:
-            # Position embeddings use different initialization
-            nn.init.normal_(self.position_embeddings.wpe.weight, std=position_init_std)
+        # Position embeddings use different initialization standard from other weights
+        nn.init.normal_(self.position_embeddings.wpe.weight, std=position_init_std)
 
     @torch.no_grad()
     def generate(

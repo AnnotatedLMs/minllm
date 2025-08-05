@@ -20,19 +20,11 @@ class TestRoPE:
     """Test RoPE implementation."""
 
     @pytest.fixture
-    def rope_config(self) -> position.RoPEConfig:
-        """Create a basic RoPE config."""
-        return position.RoPEConfig(
-            theta=10000.0,
-            scaling=None,
-        )
-
-    @pytest.fixture
-    def rope_module(self, rope_config: position.RoPEConfig) -> core.PrecomputedRoPE:
+    def rope_module(self) -> core.PrecomputedRoPE:
         """Create a RoPE module."""
         return core.PrecomputedRoPE(
             dim=64,  # head_dim
-            config=rope_config,
+            theta=10000.0,
             max_seq_len=128,
         )
 
@@ -104,19 +96,11 @@ class TestPartialRoPE:
     """Test PartialRoPE implementation for DeepSeek."""
 
     @pytest.fixture
-    def rope_config(self) -> position.RoPEConfig:
-        """Create a basic RoPE config."""
-        return position.RoPEConfig(
-            theta=10000.0,
-            scaling=None,
-        )
-
-    @pytest.fixture
-    def partial_rope(self, rope_config: position.RoPEConfig) -> rope_partial.PartialRoPE:
+    def partial_rope(self) -> rope_partial.PartialRoPE:
         """Create a PartialRoPE module."""
         return rope_partial.PartialRoPE(
             dim=64,  # rope_dim, not full head_dim
-            config=rope_config,
+            theta=10000.0,
         )
 
     def test_partial_rope_forward(self, partial_rope: rope_partial.PartialRoPE) -> None:
@@ -193,15 +177,11 @@ class TestRoPEScaling:
             original_context_len=8192,
         )
 
-        rope_config = position.RoPEConfig(
-            theta=500000.0,
-            scaling=scaling_config,
-        )
-
         rope_module = core.PrecomputedRoPE(
             dim=128,
-            config=rope_config,
+            theta=500000.0,
             max_seq_len=65536,  # Extended context
+            scaling=scaling_config,
         )
 
         # Test forward pass with extended sequence

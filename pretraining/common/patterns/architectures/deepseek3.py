@@ -13,7 +13,6 @@ from pretraining.common.patterns.blocks import deepseek3 as deepseek3_blocks
 from pretraining.common.patterns.heads import multi_token
 from pretraining.common.patterns.position import rope_partial
 from pretraining.configs.model.architectures import deepseek
-from pretraining.configs.model.components import position
 
 
 class DeepSeek3(llm.BaseLLM):
@@ -103,10 +102,9 @@ class DeepSeek3(llm.BaseLLM):
         self.embedding_dropout = nn.Dropout(dropout) if dropout is not None else None
 
         # RoPE module - Partial RoPE for MLA
-        rope_config = position.RoPEConfig(theta=rope_theta)
         self.rope = rope_partial.PartialRoPE(
             dim=rope_dim,
-            config=rope_config,
+            theta=rope_theta,
         )
 
         # Transformer blocks
@@ -208,11 +206,10 @@ class DeepSeek3(llm.BaseLLM):
                 attention_mask=attention_mask,
             )
 
-            # Collect auxiliary loss from MoE if present
-            if hasattr(block, "moe") and hasattr(block.moe, "get_auxiliary_loss"):
-                aux_loss = block.moe.get_auxiliary_loss()
-                if aux_loss is not None:
-                    aux_losses.append(aux_loss)
+            # Collect auxiliary loss from MoE
+            aux_loss = block.moe.get_auxiliary_loss()
+            if aux_loss is not None:
+                aux_losses.append(aux_loss)
 
         # Apply final norm
         normalized: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
@@ -271,7 +268,7 @@ class DeepSeek3(llm.BaseLLM):
             hidden_states = block(hidden_states, attention_mask=attention_mask)
 
             # Collect auxiliary losses only during training
-            if self.training and hasattr(block, "moe") and hasattr(block.moe, "get_auxiliary_loss"):
+            if self.training:
                 aux_loss = block.moe.get_auxiliary_loss()
                 if aux_loss is not None:
                     aux_losses.append(aux_loss)

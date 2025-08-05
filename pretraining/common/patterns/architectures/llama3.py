@@ -13,7 +13,6 @@ from pretraining.common.patterns.blocks import llama3 as llama3_blocks
 from pretraining.common.patterns.cache import kv_cache
 from pretraining.common.patterns.position import core
 from pretraining.configs.model.architectures import llama
-from pretraining.configs.model.components import position
 
 
 class Llama3(llm.BaseLLM):
@@ -42,12 +41,11 @@ class Llama3(llm.BaseLLM):
         hidden_dim: int,
         n_layers: int,
         block_size: int,
-        # RoPE params
-        rope_theta: float = 10000.0,
-        rope_scaling: typing.Optional[typing.Dict[str, typing.Any]] = None,
         # Transformer params
-        num_heads: int = 32,
-        num_kv_heads: typing.Optional[int] = None,  # For GQA
+        num_heads: int,  # query heads
+        num_kv_heads: int,
+        # RoPE params
+        rope_theta: float = 500000.0,
         norm_eps: float = 1e-5,
         use_flash_attention: bool = False,
         # FFN params
@@ -64,8 +62,7 @@ class Llama3(llm.BaseLLM):
             hidden_dim: Hidden dimension
             n_layers: Number of transformer layers
             block_size: Maximum sequence length
-            rope_theta: Base frequency for RoPE
-            rope_scaling: Optional RoPE scaling config
+            rope_theta: Base frequency for RoPE (Llama3 default: 500000)
             num_heads: Number of attention heads
             num_kv_heads: Number of key/value heads (for GQA)
             norm_eps: RMSNorm epsilon
@@ -88,14 +85,10 @@ class Llama3(llm.BaseLLM):
             embedding_dim=hidden_dim,
         )
 
-        # RoPE module
-        scaling_config = None
-        if rope_scaling:
-            scaling_config = position.RoPEScalingConfig(**rope_scaling)
-        rope_config = position.RoPEConfig(theta=rope_theta, scaling=scaling_config)
+        # RoPE module - standard Llama3 configuration without scaling
         self.rope = core.PrecomputedRoPE(
             dim=hidden_dim // num_heads,  # head_dim
-            config=rope_config,
+            theta=rope_theta,
         )
 
         # Transformer blocks
@@ -104,7 +97,7 @@ class Llama3(llm.BaseLLM):
                 llama3_blocks.Llama3TransformerBlock(
                     hidden_dim=hidden_dim,
                     num_heads=num_heads,
-                    num_kv_heads=num_kv_heads if num_kv_heads else num_heads,
+                    num_kv_heads=num_kv_heads,
                     rope_module=self.rope,
                     norm_eps=norm_eps,
                     ffn_dim_multiplier=ffn_dim_multiplier,
@@ -124,13 +117,7 @@ class Llama3(llm.BaseLLM):
     @classmethod
     def from_config(cls, config: llama.Llama3Config) -> "Llama3":
         """Create Llama3 from a config object."""
-        # Extract attention config - now properly typed as GroupedQueryAttentionConfig
         attn_config = config.transformer.attention
-
-        # Extract RoPE scaling if present
-        rope_scaling = None
-        if config.transformer.rope.scaling:
-            rope_scaling = config.transformer.rope.scaling.model_dump()
 
         return cls(
             # Core dimensions
@@ -140,7 +127,6 @@ class Llama3(llm.BaseLLM):
             block_size=config.transformer.block_size,
             # RoPE params
             rope_theta=config.transformer.rope.theta,
-            rope_scaling=rope_scaling,
             # Transformer params
             num_heads=attn_config.num_heads,
             num_kv_heads=attn_config.num_kv_heads,
