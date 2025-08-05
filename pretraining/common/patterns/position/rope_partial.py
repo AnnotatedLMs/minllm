@@ -3,10 +3,10 @@ import jaxtyping
 import torch
 
 # Project
-from pretraining.common.patterns.position import rope_base
+from pretraining.common.patterns.position import core
 
 
-class PartialRoPE(rope_base.BaseRoPE):
+class PartialRoPE(core.RoPEBase):
     """
     RoPE applied to only a subset of head dimensions.
 

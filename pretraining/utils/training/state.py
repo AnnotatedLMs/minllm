@@ -99,6 +99,19 @@ class TrainingState(base.BaseConfig):
     def get_checkpoint_dict(self) -> typing.Dict[str, typing.Any]:
         """Get state dict for checkpointing.
 
+        Why Save RNG State (for ML researchers):
+        - Ensures EXACT reproduction when resuming training
+        - Without RNG state: Different random numbers after resume
+        - This affects: dropout patterns, data shuffling, augmentations
+        - Critical for debugging intermittent training failures
+
+        What Gets Saved:
+        - iteration/tokens_seen: Know where training stopped
+        - epoch: Current pass through dataset
+        - best_val_loss: For model selection
+        - torch RNG: Controls CPU operations (dropout, init)
+        - cuda RNG: Controls GPU operations (if using GPU)
+
         Returns:
             Dictionary with all state to save
         """

@@ -12,7 +12,17 @@ from pretraining.utils import torch_utils
 def compute_perplexity(loss: typing.Union[float, torch.Tensor]) -> float:
     """Compute perplexity from cross-entropy loss.
 
-    Perplexity = exp(loss). We clamp to avoid overflow.
+    What Perplexity Means for ML Researchers:
+    - Perplexity = exp(cross_entropy_loss)
+    - Intuition: "How surprised is the model by the test data?"
+    - Lower = better (model is less surprised/confused)
+    - Perplexity of 100 means model is as confused as if choosing
+      randomly from 100 equally likely options
+    - Random guessing would give perplexity ≈ vocabulary size
+
+    Why We Clamp:
+    - Loss > 20 gives perplexity > 485 million (numerically unstable)
+    - Such high values indicate training failure anyway
 
     Args:
         loss: Cross-entropy loss value (scalar tensor or float)
@@ -30,6 +40,22 @@ def compute_perplexity(loss: typing.Union[float, torch.Tensor]) -> float:
 
 def compute_gradient_norm(model: torch.nn.Module, norm_type: float = 2.0) -> float:
     """Compute total gradient norm across all parameters.
+
+    Why Monitor Gradient Norm:
+    - Indicates training stability (spikes = instability)
+    - Helps diagnose gradient explosion/vanishing
+    - Guides learning rate and gradient clipping decisions
+
+    What the Values Mean:
+    - Gradient explosion: Sudden spikes to very large values
+    - Gradient vanishing: Drops to near 0
+    - After clipping: Should be ≤ clip value
+    - Watch for sudden changes rather than absolute values
+
+    L2 Norm Intuition:
+    - Square root of sum of squared gradients
+    - Measures "total magnitude" of parameter updates
+    - Most common choice (norm_type=2.0)
 
     Uses torch.nn.utils.clip_grad_norm_ without clipping to just compute norm.
     This is the standard way to monitor gradient health during training.
@@ -123,6 +149,18 @@ def collect_throughput_metrics(
     global_step: int,
 ) -> typing.Dict[str, float]:
     """Collect throughput/speed metrics.
+
+    Understanding Training Throughput:
+    - Tokens/sec: Primary efficiency metric for LLM training
+    - Higher = more efficient use of compute resources
+    - Depends on: model size, batch size, sequence length, hardware
+
+    Optimization Tips:
+    - Increase batch size until GPU memory is ~90% utilized
+    - Use gradient accumulation if batch won't fit
+    - Enable mixed precision (fp16/bf16) for speedup
+    - Use Flash Attention for long sequences
+    - Profile to find bottlenecks (data loading vs compute)
 
     Args:
         tokens_processed: Number of tokens in the batch

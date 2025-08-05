@@ -7,10 +7,10 @@ import torch
 import torch.nn as nn
 
 # Project
-from pretraining.common.patterns.attention import base
+from pretraining.common.patterns.attention import core
 
 
-class MultiHeadAttention(base.Attention):
+class MultiHeadAttention(core.Attention):
     """
     Multi-Head Attention (MHA) - The classic attention pattern.
 
@@ -156,7 +156,7 @@ class MultiHeadAttention(base.Attention):
         The MHA process:
         1. Combined projection - single matrix multiply produces Q, K, V efficiently
         2. Split and reshape - separate Q, K, V and organize into attention heads
-        3. Apply attention - compute scaled dot-product attention for each head
+        3. Compute attention - compute scaled dot-product attention for each head
         4. Merge heads - concatenate all head outputs back together
         5. Output projection - final linear transform with dropout
 

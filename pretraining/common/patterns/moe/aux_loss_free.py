@@ -8,19 +8,26 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # Project
-from pretraining.common.patterns.moe import base
+from pretraining.common.patterns.moe import core
 
 
-class AuxLossFreeMoE(base.MoE):
+class AuxLossFreeMoE(core.MoE):
     """
-    DeepSeek-V3 MoE implementation.
+    DeepSeek-V3 MoE implementation - Auxiliary Loss Free Mixture of Experts.
 
-    Pattern: Shared expert + Routed experts with centroid-based affinity
-    Features:
-    - Shared expert processes all tokens
-    - Routed experts selected via centroid affinity scores
-    - Dynamic bias adjustment for load balancing (routing only)
-    - Complementary sequence-wise auxiliary loss
+    Used by: DeepSeek-V3
+
+    Variation: Shared expert + Routed experts with centroid-based affinity
+    Computation: Affinity scores via sigmoid(token · centroid), bias-adjusted for load balancing
+    Effect: Eliminates auxiliary loss during training while maintaining expert balance
+
+    Variation: Dynamic bias adjustment tracks expert load
+    Computation: Bias terms updated based on actual vs expected expert utilization
+    Effect: Natural load balancing without explicit loss terms
+
+    Variation: Shared expert processes all tokens
+    Computation: Weighted combination of shared (ratio) and routed experts (1-ratio)
+    Effect: Ensures all tokens get minimum processing while specializing via routing
     """
 
     def __init__(
@@ -212,16 +219,19 @@ class AuxLossFreeMoE(base.MoE):
         x: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
     ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
         """
-        Apply auxiliary-loss-free MoE.
+        Apply auxiliary-loss-free MoE to input tokens.
 
-        The process:
-        1. Apply shared expert to all tokens
-        2. Compute gating scores with dynamic bias
-        3. Select top-k experts per token
-        4. Normalize weights using sum normalization
-        5. Route tokens to selected experts
-        6. Update load balancing bias (no aux loss)
-        7. Combine shared and routed expert outputs
+        The DeepSeek-V3 MoE process:
+        1. Shared expert - apply shared FFN to all tokens (always active)
+        2. Compute affinity - calculate sigmoid(token · centroid) for each expert
+        3. Apply dynamic bias - add learned bias terms to balance expert load
+        4. Select top-k - choose k highest scoring experts per token
+        5. Normalize weights - use sum normalization (not softmax) for selected experts
+        6. Route and compute - apply selected experts with normalized weights
+        7. Update bias - adjust bias terms based on actual vs expected expert usage
+        8. Combine outputs - weighted sum of shared (ratio) and routed (1-ratio) outputs
+
+        Note: No auxiliary loss is added - load balancing happens through dynamic bias adjustment.
         """
         shared_output: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         shared_output = self._apply_shared_expert(x)

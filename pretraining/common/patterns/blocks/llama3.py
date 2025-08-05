@@ -6,12 +6,12 @@ import torch.nn as nn
 
 # Project
 from pretraining.common.patterns.attention import grouped_query
-from pretraining.common.patterns.blocks import prenorm
+from pretraining.common.patterns.blocks import core as blocks_core
 from pretraining.common.patterns.ffn import gated
-from pretraining.common.patterns.position import rope
+from pretraining.common.patterns.position import core as position_core
 
 
-class Llama3TransformerBlock(prenorm.PrenormTransformerBlock):
+class Llama3TransformerBlock(blocks_core.PrenormTransformerBlock):
     """
     Llama3-specific transformer block.
 
@@ -38,7 +38,7 @@ class Llama3TransformerBlock(prenorm.PrenormTransformerBlock):
         hidden_dim: int,
         num_heads: int,
         num_kv_heads: int,
-        rope_module: rope.RoPE,
+        rope_module: position_core.PrecomputedRoPE,
         norm_eps: float = 1e-5,
         ffn_dim_multiplier: typing.Optional[float] = None,
         multiple_of: int = 256,

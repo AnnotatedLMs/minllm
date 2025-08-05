@@ -308,37 +308,33 @@ class GPT2(llm.BaseLLM):
         attention_mask: typing.Optional[torch.Tensor] = None,
     ) -> outputs.ForwardOutput:
         """
-        Unified forward pass for both training and inference.
+        Process input tokens through the GPT-2 model.
 
-        Args:
-            input_ids: Input token indices [batch, seq]
-            attention_mask: Optional attention mask
+        The GPT-2 forward pass:
+        1. Token embeddings - convert token IDs to dense vectors
+        2. Position embeddings - add learned positional information (fixed up to max_position_embeddings)
+        3. Combine embeddings - sum token and position embeddings, apply dropout
+        4. Transformer blocks - apply N layers of self-attention and feed-forward networks
+        5. Final layer norm - normalize the final hidden states
+        6. Output projection - project to vocabulary size using tied embeddings
 
-        Returns:
-            ForwardOutput containing logits
+        Note: GPT-2 uses learned position embeddings (not RoPE), limiting sequence length to training max.
         """
         batch_size, seq_len = input_ids.shape
         device = input_ids.device
 
-        # 1. Token embeddings
         token_embeds: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         token_embeds = self.token_embeddings(input_ids)
 
-        # 2. Position embeddings
         pos_embeds = self._get_position_embeddings(batch_size, seq_len, device)
 
-        # 3. Combine embeddings with dropout
-        # Note: PyTorch's Dropout automatically handles train/eval mode
         x = self._combine_embeddings(token_embeds, pos_embeds)
         x = self._maybe_apply_dropout(x, self.embedding_dropout)
 
-        # 4. Apply transformer blocks
         hidden_states, _ = self._apply_transformer_blocks(
             x, attention_mask=attention_mask, output_hidden_states=False
         )
 
-        # 5. Compute logits
         logits = self._compute_logits(hidden_states)
 
-        # 6. Return ForwardOutput
         return outputs.ForwardOutput(logits=logits)

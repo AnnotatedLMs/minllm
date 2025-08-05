@@ -10,8 +10,8 @@ import torch
 import torch.testing
 
 # Project
+from pretraining.common.patterns.position import core
 from pretraining.common.patterns.position import learned
-from pretraining.common.patterns.position import rope
 from pretraining.common.patterns.position import rope_partial
 from pretraining.configs.model.components import position
 
@@ -28,15 +28,15 @@ class TestRoPE:
         )
 
     @pytest.fixture
-    def rope_module(self, rope_config: position.RoPEConfig) -> rope.RoPE:
+    def rope_module(self, rope_config: position.RoPEConfig) -> core.PrecomputedRoPE:
         """Create a RoPE module."""
-        return rope.RoPE(
+        return core.PrecomputedRoPE(
             dim=64,  # head_dim
             config=rope_config,
             max_seq_len=128,
         )
 
-    def test_rope_initialization(self, rope_module: rope.RoPE) -> None:
+    def test_rope_initialization(self, rope_module: core.PrecomputedRoPE) -> None:
         """Test RoPE initializes correctly."""
         assert rope_module.dim == 64
         assert rope_module.max_seq_len == 128
@@ -48,7 +48,7 @@ class TestRoPE:
         assert hasattr(rope_module, "inv_freq")
         assert isinstance(rope_module.inv_freq, torch.Tensor)
 
-    def test_rope_forward_basic(self, rope_module: rope.RoPE) -> None:
+    def test_rope_forward_basic(self, rope_module: core.PrecomputedRoPE) -> None:
         """Test basic forward pass."""
         batch_size, seq_len, num_heads, head_dim = 2, 10, 8, 64
         x = torch.randn(batch_size, seq_len, num_heads, head_dim)
@@ -62,7 +62,7 @@ class TestRoPE:
         # Check output is different from input (rotation applied)
         assert not torch.allclose(output, x)
 
-    def test_rope_position_offset(self, rope_module: rope.RoPE) -> None:
+    def test_rope_position_offset(self, rope_module: core.PrecomputedRoPE) -> None:
         """Test position offset functionality for KV caching."""
         batch_size, num_heads, head_dim = 2, 8, 64
 
@@ -82,7 +82,7 @@ class TestRoPE:
         torch.testing.assert_close(out1, out_full[:, :1])
         torch.testing.assert_close(out2, out_full[:, 1:2])
 
-    def test_rope_max_position_exceeded(self, rope_module: rope.RoPE) -> None:
+    def test_rope_max_position_exceeded(self, rope_module: core.PrecomputedRoPE) -> None:
         """Test error when position exceeds precomputed max."""
         x = torch.randn(2, 10, 8, 64)
 
@@ -90,7 +90,7 @@ class TestRoPE:
         with pytest.raises(ValueError, match="exceeds precomputed max"):
             rope_module(x, position_offset=120)  # 120 + 10 > 128
 
-    def test_rope_deterministic(self, rope_module: rope.RoPE) -> None:
+    def test_rope_deterministic(self, rope_module: core.PrecomputedRoPE) -> None:
         """Test RoPE is deterministic."""
         x = torch.randn(2, 10, 8, 64)
 
@@ -198,7 +198,7 @@ class TestRoPEScaling:
             scaling=scaling_config,
         )
 
-        rope_module = rope.RoPE(
+        rope_module = core.PrecomputedRoPE(
             dim=128,
             config=rope_config,
             max_seq_len=65536,  # Extended context

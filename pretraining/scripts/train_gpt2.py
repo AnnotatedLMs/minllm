@@ -24,13 +24,6 @@ Main training flow:
 10. Initialize trainer with all components
 11. Run training loop with periodic evaluation
 12. Save final checkpoint and model-only checkpoint
-
-Usage:
-    Single GPU:
-        uv run python train_gpt2.py configs/examples/debug/gpt2_debug.yaml
-
-    Multi-GPU with torchrun:
-        torchrun --nproc_per_node=4 train_gpt2.py configs/examples/debug/gpt2_debug.yaml
 """
 
 # Standard Library
@@ -57,6 +50,7 @@ from pretraining.utils.training import evaluation
 from pretraining.utils.training import launcher
 from pretraining.utils.training import loss
 from pretraining.utils.training import lr_scheduler
+from pretraining.utils.training import model_wrapper
 from pretraining.utils.training import optimizer
 
 
@@ -76,19 +70,17 @@ def main(trainer_config: core.TrainerConfig) -> None:
     log.info("Building GPT-2 model...")
     model = gpt2.GPT2(trainer_config.llm)
 
-    model = model.to(device)
+    # Move model to device (FSDP handles this internally)
+    if trainer_config.training.execution.strategy != execution_configs.ExecutionStrategy.FSDP:
+        model = model.to(device)
 
-    if trainer_config.training.execution.strategy == execution_configs.ExecutionStrategy.DDP:
-        log.info("Wrapping model with DDP...")
-
-        dist_model = torch.nn.parallel.DistributedDataParallel(
-            model,
-            device_ids=[device.index] if device.type == "cuda" else None,
-            find_unused_parameters=trainer_config.training.execution.ddp.find_unused_params,
-        )
-
-    else:  # SINGLE
-        dist_model = distributed.SingleAccelerator(model)
+    # Wrap model based on execution strategy
+    log.info(f"Wrapping model with {trainer_config.training.execution.strategy.value}...")
+    dist_model = model_wrapper.wrap_model(
+        model,
+        trainer_config.training.execution,
+        trainer_config.training.precision_dtype,
+    )
 
     optim = optimizer.OptimizerFactory.create_from_config(
         dist_model, trainer_config.training.optimizer, device_type=device.type

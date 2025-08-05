@@ -3,6 +3,8 @@ import typing
 
 # Third Party
 import pydantic
+import torch
+from torch.distributed import fsdp
 
 # Project
 from pretraining.configs import base
@@ -78,3 +80,40 @@ class TrainingLoopConfig(base.BaseConfig):
         if self.token_budget is None and self.max_iters is None:
             raise ValueError("Must set either token_budget or max_iters (preferably token_budget)")
         return self
+
+    @property
+    def precision_dtype(self) -> typing.Optional[torch.dtype]:
+        """Get the precision dtype for mixed precision training."""
+        if not self.mixed_precision:
+            return None
+        # Default to bfloat16 if available, otherwise float16
+        if torch.cuda.is_bf16_supported():
+            return torch.bfloat16
+        return torch.float16
+
+    @property
+    def fsdp_precision(self) -> typing.Optional[fsdp.MixedPrecision]:
+        """Get FSDP mixed precision config based on execution settings."""
+        if self.execution.strategy != execution_configs.ExecutionStrategy.FSDP:
+            return None
+        if not self.mixed_precision or self.execution.fsdp is None:
+            return None
+
+        dtype = self.precision_dtype
+        if dtype is None:
+            return None
+
+        if self.execution.fsdp.precision == execution_configs.FSDPPrecision.PURE:
+            return fsdp.MixedPrecision(
+                param_dtype=dtype,
+                reduce_dtype=dtype,
+                buffer_dtype=dtype,
+            )
+        elif self.execution.fsdp.precision == execution_configs.FSDPPrecision.MIXED:
+            return fsdp.MixedPrecision(
+                param_dtype=dtype,
+                reduce_dtype=torch.float32,
+                buffer_dtype=dtype,
+            )
+        else:
+            return None

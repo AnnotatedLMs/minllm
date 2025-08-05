@@ -7,10 +7,10 @@ import torch
 import torch.nn as nn
 
 # Project
-from pretraining.common.patterns.ffn import base
+from pretraining.common.patterns.ffn import core
 
 
-class MLP(base.FeedForward):
+class MLP(core.FeedForward):
     """
     Standard MLP (Multi-Layer Perceptron) pattern.
 

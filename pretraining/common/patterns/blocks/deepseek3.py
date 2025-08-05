@@ -3,12 +3,12 @@ import torch.nn as nn
 
 # Project
 from pretraining.common.patterns.attention import multi_latent
-from pretraining.common.patterns.blocks import prenorm
+from pretraining.common.patterns.blocks import core
 from pretraining.common.patterns.moe import aux_loss_free
 from pretraining.common.patterns.position import rope_partial
 
 
-class DeepSeek3TransformerBlock(prenorm.PrenormTransformerBlock):
+class DeepSeek3TransformerBlock(core.PrenormTransformerBlock):
     """
     DeepSeek-V3 specific transformer block.
 

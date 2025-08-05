@@ -8,11 +8,11 @@ import torch
 import torch.nn as nn
 
 # Project
-from pretraining.common.patterns.attention import base
+from pretraining.common.patterns.attention import core
 from pretraining.common.patterns.position import rope_partial
 
 
-class MultiHeadLatentAttention(base.Attention):
+class MultiHeadLatentAttention(core.Attention):
     """
     Multi-head Latent Attention (MLA) - Compression-based attention for large models.
 

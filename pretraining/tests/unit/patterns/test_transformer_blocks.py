@@ -14,7 +14,7 @@ import torch.testing
 from pretraining.common.patterns.blocks import deepseek3
 from pretraining.common.patterns.blocks import gpt2
 from pretraining.common.patterns.blocks import llama3
-from pretraining.common.patterns.position import rope
+from pretraining.common.patterns.position import core
 from pretraining.common.patterns.position import rope_partial
 from pretraining.configs.model.components import position
 
@@ -61,13 +61,13 @@ class TestGPT2TransformerBlock:
 
 class TestLlama3TransformerBlock:
     @pytest.fixture
-    def rope_module(self) -> rope.RoPE:
+    def rope_module(self) -> core.PrecomputedRoPE:
         """Create RoPE module for Llama."""
         config = position.RoPEConfig(theta=10000.0)
-        return rope.RoPE(dim=16, config=config)  # 16 = head_dim
+        return core.PrecomputedRoPE(dim=16, config=config)  # 16 = head_dim
 
     @pytest.fixture
-    def llama_block(self, rope_module: rope.RoPE) -> llama3.Llama3TransformerBlock:
+    def llama_block(self, rope_module: core.PrecomputedRoPE) -> llama3.Llama3TransformerBlock:
         """Create a Llama 3 transformer block."""
         return llama3.Llama3TransformerBlock(
             hidden_dim=64,

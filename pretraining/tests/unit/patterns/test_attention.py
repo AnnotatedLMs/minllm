@@ -14,7 +14,7 @@ from pretraining.common.patterns.attention import grouped_query
 from pretraining.common.patterns.attention import multi_head
 from pretraining.common.patterns.attention import multi_latent
 from pretraining.common.patterns.cache import kv_cache
-from pretraining.common.patterns.position import rope
+from pretraining.common.patterns.position import core
 from pretraining.common.patterns.position import rope_partial
 from pretraining.configs.model.components import position
 
@@ -109,17 +109,17 @@ class TestGroupedQueryAttention:
     """Test grouped query attention (Llama style)."""
 
     @pytest.fixture
-    def rope_module(self) -> rope.RoPE:
+    def rope_module(self) -> core.PrecomputedRoPE:
         """Create RoPE module for GQA."""
         config = position.RoPEConfig(theta=10000.0)
-        return rope.RoPE(
+        return core.PrecomputedRoPE(
             dim=16,  # head_dim for GQA with hidden_dim=128, num_heads=8
             config=config,
             max_seq_len=512,
         )
 
     @pytest.fixture
-    def gqa(self, rope_module: rope.RoPE) -> grouped_query.GroupedQueryAttention:
+    def gqa(self, rope_module: core.PrecomputedRoPE) -> grouped_query.GroupedQueryAttention:
         """Create GroupedQueryAttention instance."""
         return grouped_query.GroupedQueryAttention(
             hidden_dim=128,

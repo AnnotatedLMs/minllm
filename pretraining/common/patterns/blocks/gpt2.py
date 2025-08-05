@@ -3,11 +3,11 @@ import torch.nn as nn
 
 # Project
 from pretraining.common.patterns.attention import multi_head
-from pretraining.common.patterns.blocks import prenorm
+from pretraining.common.patterns.blocks import core
 from pretraining.common.patterns.ffn import mlp
 
 
-class GPT2TransformerBlock(prenorm.PrenormTransformerBlock):
+class GPT2TransformerBlock(core.PrenormTransformerBlock):
     """
     GPT-2 specific transformer block.
 

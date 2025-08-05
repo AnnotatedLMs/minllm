@@ -7,10 +7,10 @@ import torch
 import torch.nn as nn
 
 # Project
-from pretraining.common.patterns.ffn import base
+from pretraining.common.patterns.ffn import core
 
 
-class MultiplicativeGatedFFN(base.FeedForward):
+class MultiplicativeGatedFFN(core.FeedForward):
     """
     Multiplicative gated feedforward network pattern (SwiGLU family).
 
@@ -129,7 +129,6 @@ class MultiplicativeGatedFFN(base.FeedForward):
         self,
         x: jaxtyping.Float[torch.Tensor, "batch seq_len intermediate"],
     ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
-        """Project back to model dimension."""
         down: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
         down = self.down_proj(x)
         return down

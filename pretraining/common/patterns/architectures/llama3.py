@@ -11,7 +11,7 @@ from pretraining.common.base import llm
 from pretraining.common.base import outputs
 from pretraining.common.patterns.blocks import llama3 as llama3_blocks
 from pretraining.common.patterns.cache import kv_cache
-from pretraining.common.patterns.position import rope
+from pretraining.common.patterns.position import core
 from pretraining.configs.model.architectures import llama
 from pretraining.configs.model.components import position
 
@@ -93,7 +93,7 @@ class Llama3(llm.BaseLLM):
         if rope_scaling:
             scaling_config = position.RoPEScalingConfig(**rope_scaling)
         rope_config = position.RoPEConfig(theta=rope_theta, scaling=scaling_config)
-        self.rope = rope.RoPE(
+        self.rope = core.PrecomputedRoPE(
             dim=hidden_dim // num_heads,  # head_dim
             config=rope_config,
         )

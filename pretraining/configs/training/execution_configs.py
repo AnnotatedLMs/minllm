@@ -21,6 +21,9 @@ class ExecutionStrategy(enum.Enum):
     DDP = "ddp"
     """Distributed Data Parallel training."""
 
+    FSDP = "fsdp"
+    """Fully Sharded Data Parallel training."""
+
 
 class DDPGradSyncMode(enum.Enum):
     """Gradient synchronization mode for DDP."""
@@ -39,6 +42,66 @@ class DDPGradSyncMode(enum.Enum):
     Can use this mode with both option of `find_unused_params` but specifically recommended to use with `find_unused_params`
     set to True, to prevent errors.
     """
+
+
+class FSDPShardingStrategy(enum.Enum):
+    """FSDP sharding strategies."""
+
+    FULL_SHARD = "full_shard"
+    """Shard model parameters, gradients and optimizer states across all ranks."""
+
+    SHARD_GRAD_OP = "shard_grad_op"
+    """Shard gradients and optimizer states only (keep parameters replicated)."""
+
+    NO_SHARD = "no_shard"
+    """No sharding - similar to DDP."""
+
+    HYBRID_SHARD = "hybrid_shard"
+    """Hybrid sharding across nodes."""
+
+    _HYBRID_SHARD_ZERO2 = "_hybrid_shard_zero2"
+    """Hybrid sharding with Zero2 strategy."""
+
+
+class FSDPWrapStrategy(enum.Enum):
+    """FSDP model wrapping strategies."""
+
+    BY_BLOCK = "by_block"
+    """Wrap each transformer block with its own FSDP instance."""
+
+    BY_BLOCK_AND_SIZE = "by_block_and_size"
+    """Like 'by_block' but embeddings and output layers wrapped separately."""
+
+    BY_BLOCK_GROUP = "by_block_group"
+    """Wrap block groups together (requires block_group_size > 1)."""
+
+    BY_BLOCK_GROUP_AND_SIZE = "by_block_group_and_size"
+    """Like 'by_block_group' but embeddings and output layers wrapped separately."""
+
+    SIZE_BASED = "size_based"
+    """Use PyTorch's default size-based auto wrap policy."""
+
+    ONE_IN_TWO = "one_in_two"
+    """Wrap every other layer."""
+
+    ONE_IN_THREE = "one_in_three"
+    """Wrap every third layer."""
+
+    ONE_IN_FOUR = "one_in_four"
+    """Wrap every fourth layer."""
+
+    ONE_IN_FIVE = "one_in_five"
+    """Wrap every fifth layer."""
+
+
+class FSDPPrecision(enum.Enum):
+    """FSDP mixed precision modes."""
+
+    PURE = "pure"
+    """All operations in autocast precision (bf16/fp16)."""
+
+    MIXED = "mixed"
+    """Parameters and buffers in autocast precision, reductions in fp32."""
 
 
 class BaseDeviceConfig(base.BaseConfig, abc.ABC):
@@ -127,6 +190,62 @@ class DDPConfig(BaseDeviceConfig):
         return self._setup_cuda_device()
 
 
+class FSDPConfig(BaseDeviceConfig):
+    """Configuration for Fully Sharded Data Parallel training."""
+
+    sharding_strategy: FSDPShardingStrategy = FSDPShardingStrategy.FULL_SHARD
+    """How to shard model parameters, gradients, and optimizer states."""
+
+    wrapping_strategy: typing.Optional[FSDPWrapStrategy] = None
+    """How to wrap model layers. If None, wrap entire model with single FSDP instance."""
+
+    precision: typing.Optional[FSDPPrecision] = FSDPPrecision.PURE
+    """Mixed precision configuration for FSDP."""
+
+    use_orig_params: bool = True
+    """Must be True for torch.compile() or parameter norm tracking."""
+
+    cpu_offload: bool = False
+    """Whether to offload parameters to CPU when not in use."""
+
+    backward_prefetch: bool = True
+    """Whether to prefetch next layer's parameters during backward pass."""
+
+    forward_prefetch: bool = False
+    """Whether to prefetch next layer's parameters during forward pass."""
+
+    limit_all_gathers: bool = True
+    """Limit the number of concurrent all-gather operations for memory efficiency."""
+
+    hybrid_sharding_num_model_replicas: typing.Optional[int] = None
+    """
+    Number of model replicas for hybrid sharding. If None, defaults to
+    world_size // local_world_size (one replica per node).
+    """
+
+    min_params_size: int = int(1e8)
+    """Minimum parameter size for SIZE_BASED wrapping strategy."""
+
+    @pydantic.model_validator(mode="after")
+    def validate_hybrid_sharding(self):
+        """Validate hybrid sharding configuration."""
+        if self.sharding_strategy in [
+            FSDPShardingStrategy.HYBRID_SHARD,
+            FSDPShardingStrategy._HYBRID_SHARD_ZERO2,
+        ]:
+            if self.hybrid_sharding_num_model_replicas is not None:
+                # Will validate against world size at runtime
+                if self.hybrid_sharding_num_model_replicas <= 0:
+                    raise ValueError("hybrid_sharding_num_model_replicas must be positive")
+        return self
+
+    def setup_device(self) -> torch.device:
+        """Setup device for FSDP - always use CUDA."""
+        if not torch.cuda.is_available():
+            raise ValueError("FSDP requires CUDA")
+        return self._setup_cuda_device()
+
+
 class ExecutionConfig(base.BaseConfig):
     """Complete execution configuration."""
 
@@ -135,6 +254,7 @@ class ExecutionConfig(base.BaseConfig):
 
     # Strategy-specific configs (only one should be set based on strategy)
     ddp: typing.Optional[DDPConfig] = None
+    fsdp: typing.Optional[FSDPConfig] = None
     single: typing.Optional[SingleConfig] = None
 
     @pydantic.model_validator(mode="after")
@@ -142,6 +262,8 @@ class ExecutionConfig(base.BaseConfig):
         # Ensure correct config is provided for strategy
         if self.strategy == ExecutionStrategy.DDP and self.ddp is None:
             self.ddp = DDPConfig()
+        elif self.strategy == ExecutionStrategy.FSDP and self.fsdp is None:
+            self.fsdp = FSDPConfig()
         elif self.strategy == ExecutionStrategy.SINGLE and self.single is None:
             self.single = SingleConfig()
         return self
@@ -150,6 +272,8 @@ class ExecutionConfig(base.BaseConfig):
         """Validate configuration consistency."""
         if self.strategy == ExecutionStrategy.DDP and self.ddp is None:
             raise ValueError("DDP strategy requires ddp config")
+        elif self.strategy == ExecutionStrategy.FSDP and self.fsdp is None:
+            raise ValueError("FSDP strategy requires fsdp config")
         elif self.strategy == ExecutionStrategy.SINGLE and self.single is None:
             raise ValueError("Single strategy requires single device config")
 
@@ -157,6 +281,8 @@ class ExecutionConfig(base.BaseConfig):
         """Setup device based on the execution strategy."""
         if self.strategy == ExecutionStrategy.DDP:
             return self.ddp.setup_device()
+        elif self.strategy == ExecutionStrategy.FSDP:
+            return self.fsdp.setup_device()
         elif self.strategy == ExecutionStrategy.SINGLE:
             return self.single.setup_device()
         else:

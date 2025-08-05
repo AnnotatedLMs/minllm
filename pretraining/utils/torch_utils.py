@@ -17,7 +17,24 @@ V = TypeVar("V", bool, int, float)
 
 
 def seed_all(seed: int) -> None:
-    """Seed all rng objects."""
+    """Seed all random number generators for reproducible training.
+
+    Why This Matters for ML Research:
+    - Ensures experiments are reproducible (same seed = same results)
+    - Critical for debugging (can replay exact failure conditions)
+    - Required for scientific validity when comparing methods
+
+    What Gets Seeded:
+    1. Python's random module (data shuffling, augmentations)
+    2. NumPy (array operations, data preprocessing)
+    3. PyTorch CPU (model initialization, dropout)
+    4. PyTorch CUDA (GPU operations, cuDNN)
+
+    Note: Even with seeding, some operations (like atomicAdd on GPU)
+    may still be non-deterministic. For full determinism, you may need:
+    - torch.use_deterministic_algorithms(True)
+    - Set CUBLAS_WORKSPACE_CONFIG environment variable
+    """
     if seed < 0 or seed > 2**32 - 1:
         raise ValueError(f"Seed {seed} is invalid. It must be on [0; 2^32 - 1]")
     random.seed(seed)
@@ -29,7 +46,14 @@ def seed_all(seed: int) -> None:
 
 
 def move_to_device(o: T, device: torch.device) -> T:
-    """Recursively move tensors to device."""
+    """Recursively move tensors to device (CPU/GPU/MPS).
+
+    Why Recursive Movement is Needed:
+    - Model outputs often contain nested structures (dicts of tensors)
+    - Batch data might be tuples/lists of tensors
+
+    Common use case: batch = move_to_device(batch, 'cuda')
+    """
     if isinstance(o, torch.Tensor):
         return o.to(device)  # type: ignore[return-value]
     elif isinstance(o, dict):
@@ -53,15 +77,28 @@ def get_default_device() -> torch.device:
 
 
 def peak_gpu_memory(reset: bool = False) -> Optional[float]:
-    """Get the peak GPU memory usage in MB across all ranks.
+    """Get the peak GPU memory usage in MB across all distributed ranks.
 
-    Only rank 0 will get the final result.
+    How GPU Memory Tracking Works:
+    - PyTorch tracks peak allocated memory since last reset
+    - Different from nvidia-smi (includes all CUDA context overhead)
+    - Only tracks tensors/buffers allocated by PyTorch
+
+    In Distributed Training:
+    - Each GPU might have different peak usage (data imbalance)
+    - This function finds the MAX across all GPUs
+    - Critical for understanding if one GPU is bottlenecking
+
+    Memory Debugging Tips:
+    - Call with reset=True at start of training loop
+    - Check after forward pass, after backward, after optimizer
+    - Large jumps indicate memory leaks or unexpected allocations
 
     Args:
         reset: Whether to reset peak memory stats after reading
 
     Returns:
-        Peak memory in MB (only on rank 0)
+        Peak memory in MB (only on rank 0, None on other ranks in distributed)
     """
     if not torch.cuda.is_available():
         return None
@@ -81,7 +118,23 @@ def peak_gpu_memory(reset: bool = False) -> Optional[float]:
 
 
 def gc_cuda() -> None:
-    """Garbage collect and empty CUDA cache."""
+    """Garbage collect Python objects and empty CUDA memory cache.
+
+    Why This Helps:
+    - PyTorch caches GPU memory for faster allocation (doesn't return to OS)
+    - Dead tensors might still occupy cache until Python GC runs
+    - Can prevent OOM errors when switching between models
+
+    What Happens:
+    1. gc.collect(): Forces Python garbage collection, deleting dead objects
+    2. empty_cache(): Returns cached GPU memory to PyTorch's allocator
+       (Note: Doesn't reduce nvidia-smi memory usage, but makes it reusable)
+
+    When to Use:
+    - Between training different model configurations
+    - After deleting large models/optimizers
+    - When debugging GPU memory issues
+    """
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -92,8 +145,23 @@ def ensure_finite_(
 ) -> None:
     """Modify tensor in place to replace infinities with finite values.
 
+    Why Infinities Appear in ML:
+    - Log of zero produces -inf (common in log probabilities)
+    - Division by zero in attention scores (before masking)
+    - Overflow in exp() operations (attention without scaling)
+    - Numerical instabilities in deep networks
+
+    What This Does:
+    - Replaces -inf with smallest representable value for dtype
+    - Replaces +inf with largest representable value for dtype
+    - Prevents NaN propagation in subsequent operations
+
+    Common Use Case:
+    - After computing log probabilities: ensure_finite_(log_probs)
+    - Before softmax on masked attention: ensure_finite_(scores)
+
     Args:
-        x: Tensor to modify
+        x: Tensor to modify in-place
         check_neg_inf: Replace -inf with dtype min value
         check_pos_inf: Replace +inf with dtype max value
     """
