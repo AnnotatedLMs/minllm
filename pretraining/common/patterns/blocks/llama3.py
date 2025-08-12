@@ -2,7 +2,7 @@
 import typing
 
 # Third Party
-import torch.nn as nn
+from torch import nn
 
 # Project
 from pretraining.common.patterns.attention import grouped_query

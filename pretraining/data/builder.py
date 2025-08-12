@@ -3,15 +3,14 @@ import pathlib
 import typing
 
 # Third Party
-import torch
-import torch.utils.data
+from torch.utils import data
 
 # Project
 from pretraining.configs.training import data_configs
 from pretraining.configs.training import trainer_configs
 from pretraining.data import iterable_dataset
 from pretraining.data import memmap_dataset
-from pretraining.utils.training import distributed
+from pretraining.utils.training import dist_utils
 
 
 def build_memmap_dataset(
@@ -30,21 +29,36 @@ def build_memmap_dataset(
         MemMapDataset instance
     """
     data_dir = pathlib.Path(data_config.data_dir)
-    data_path = data_dir / f"{split}.bin"
 
-    # For now, single file per split
-    # Could be extended to multiple files
-    dataset = memmap_dataset.MemMapDataset(
-        data_path,
-        chunk_size=chunk_size,
-        metadata=[{"split": split, "source": str(data_path)}],
-    )
+    # Check for FineWeb-style multiple files first
+    if split == "train":
+        pattern = "fineweb_train_*.bin"
+    else:
+        pattern = "fineweb_val_*.bin"
+
+    fineweb_files = sorted(data_dir.glob(pattern))
+
+    if fineweb_files:
+        # Use FineWeb files if they exist
+        dataset = memmap_dataset.MemMapDataset(
+            *fineweb_files,
+            chunk_size=chunk_size,
+            metadata=[{"split": split, "source": str(f)} for f in fineweb_files],
+        )
+    else:
+        # Fall back to simple train.bin/val.bin structure
+        data_path = data_dir / f"{split}.bin"
+        dataset = memmap_dataset.MemMapDataset(
+            data_path,
+            chunk_size=chunk_size,
+            metadata=[{"split": split, "source": str(data_path)}],
+        )
 
     return dataset
 
 
 def build_iterable_dataset(
-    base_dataset: torch.utils.data.Dataset,
+    base_dataset: data.Dataset,
     training_config: trainer_configs.TrainingLoopConfig,
     start_index: int = 0,
     epoch: int = 0,
@@ -62,7 +76,7 @@ def build_iterable_dataset(
     Returns:
         IterableDataset instance
     """
-    global_batch_size = training_config.batch.batch_size * distributed.get_world_size()
+    global_batch_size = training_config.batch.batch_size * dist_utils.get_world_size()
 
     # Create work directory for saving indices
     work_dir = None
@@ -83,11 +97,11 @@ def build_iterable_dataset(
 
 
 def build_distributed_sampler(
-    dataset: torch.utils.data.Dataset,
+    dataset: data.Dataset,
     shuffle: bool = True,
     drop_last: bool = False,
     seed: int = 0,
-) -> torch.utils.data.DistributedSampler:
+) -> data.DistributedSampler:
     """Build distributed sampler for evaluation.
 
     Args:
@@ -99,10 +113,10 @@ def build_distributed_sampler(
     Returns:
         DistributedSampler instance
     """
-    sampler = torch.utils.data.DistributedSampler(
+    sampler = data.DistributedSampler(
         dataset,
-        num_replicas=distributed.get_world_size(),
-        rank=distributed.get_global_rank(),
+        num_replicas=dist_utils.get_world_size(),
+        rank=dist_utils.get_global_rank(),
         shuffle=shuffle,
         drop_last=drop_last,
         seed=seed,

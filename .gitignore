@@ -12,4 +12,8 @@ wheels/
 .venv
 
 temp2/
+olmo_temp/
 todo.md
+nanogpt.py
+pretraining/data/sample/fineweb10b
+postraining/

@@ -1,18 +1,19 @@
 """
-Unit tests for checkpoint saving and loading.
+Unit tests for TrainingState and basic state recovery.
 
-Tests checkpoint data structure and state recovery.
-Critical for resuming long training runs.
+Tests TrainingState persistence and PyTorch state_dict recovery.
+Critical for ensuring training can be resumed correctly.
 """
 
 # Standard Library
+import pathlib
 import tempfile
-from pathlib import Path
 
 # Third Party
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
+from torch import testing
 
 # Project
 from pretraining.utils.training import state
@@ -81,7 +82,7 @@ class TestCheckpointData:
         new_model.load_state_dict(original_state)
 
         # Verify weights match after loading
-        torch.testing.assert_close(new_model.fc1.weight, simple_model.fc1.weight)
+        testing.assert_close(new_model.fc1.weight, simple_model.fc1.weight)
 
     def test_optimizer_state_recovery(
         self,
@@ -190,7 +191,7 @@ class TestCheckpointData:
 
         # Save to file
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
-            ckpt_path = Path(f.name)
+            ckpt_path = pathlib.Path(f.name)
             torch.save(checkpoint_dict, ckpt_path)
 
         # Load and verify
@@ -255,7 +256,7 @@ class TestCheckpointData:
 
         # Save and load
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
-            ckpt_path = Path(f.name)
+            ckpt_path = pathlib.Path(f.name)
             torch.save(minimal_checkpoint, ckpt_path)
 
         loaded_dict = torch.load(ckpt_path, weights_only=False)

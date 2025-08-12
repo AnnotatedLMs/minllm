@@ -10,6 +10,6 @@ class BaseConfig(pydantic.BaseModel):
         extra="forbid",
         # Validate on assignment for immediate feedback
         validate_assignment=True,
-        # Use enum values for serialization (e.g. "gpt2" not Architecture.GPT2)
-        use_enum_values=True,
+        # Keep enum instances for type safety (not just their string values)
+        use_enum_values=False,
     )

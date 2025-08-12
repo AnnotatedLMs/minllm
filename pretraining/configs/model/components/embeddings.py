@@ -8,7 +8,6 @@ from pretraining.configs import base
 class TokenEmbeddingConfig(base.BaseConfig):
     """Configuration for token embedding layers."""
 
-    vocab_size: int = pydantic.Field(gt=0, description="Vocabulary size")
     embedding_dim: int = pydantic.Field(gt=0, description="Embedding dimension")
 
     # Embedding initialization

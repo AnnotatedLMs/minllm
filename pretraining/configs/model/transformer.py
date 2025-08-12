@@ -18,7 +18,6 @@ class TransformerConfig(base.BaseConfig):
     """
 
     # 1. Core dimensions (define the model size and capacity)
-    vocab_size: int = pydantic.Field(gt=0, description="Size of the token vocabulary")
     hidden_dim: int = pydantic.Field(gt=0, description="Dimension of hidden states (d_model)")
     n_layers: int = pydantic.Field(gt=0, description="Number of transformer blocks")
     block_size: int = pydantic.Field(gt=0, description="Maximum sequence length")

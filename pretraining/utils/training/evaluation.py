@@ -3,7 +3,7 @@ import typing
 
 # Third Party
 import torch
-import torch.nn as nn
+from torch import nn
 
 # Project
 from pretraining.utils.training import loss as loss_utils

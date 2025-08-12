@@ -7,7 +7,7 @@ Tests static buffer-based KV caching for efficient generation.
 # Third Party
 import pytest
 import torch
-import torch.testing
+from torch import testing
 
 # Project
 from pretraining.common.patterns.cache import kv_cache
@@ -55,12 +55,12 @@ class TestKVCache:
         assert cached_v.shape == (2, 1, 4, 64)
 
         # Check values were stored
-        torch.testing.assert_close(cached_k, xk)
-        torch.testing.assert_close(cached_v, xv)
+        testing.assert_close(cached_k, xk)
+        testing.assert_close(cached_v, xv)
 
         # Check internal buffer was updated
-        torch.testing.assert_close(cache.cache_k[:, 0:1], xk)
-        torch.testing.assert_close(cache.cache_v[:, 0:1], xv)
+        testing.assert_close(cache.cache_k[:, 0:1], xk)
+        testing.assert_close(cache.cache_v[:, 0:1], xv)
 
     def test_cache_update_sequence(self, cache: kv_cache.KVCache) -> None:
         """Test updating cache with a sequence of tokens."""
@@ -82,12 +82,12 @@ class TestKVCache:
         assert cached_v2.shape == (2, 11, 4, 64)
 
         # Check that old values are preserved
-        torch.testing.assert_close(cached_k2[:, :10], xk1)
-        torch.testing.assert_close(cached_v2[:, :10], xv1)
+        testing.assert_close(cached_k2[:, :10], xk1)
+        testing.assert_close(cached_v2[:, :10], xv1)
 
         # Check new values
-        torch.testing.assert_close(cached_k2[:, 10:11], xk2)
-        torch.testing.assert_close(cached_v2[:, 10:11], xv2)
+        testing.assert_close(cached_k2[:, 10:11], xk2)
+        testing.assert_close(cached_v2[:, 10:11], xv2)
 
     def test_cache_incremental_generation(self, cache: kv_cache.KVCache) -> None:
         """Test cache behavior during incremental token generation."""
@@ -112,8 +112,8 @@ class TestKVCache:
             # Verify all previous tokens are correct
             expected_k = torch.cat(all_keys, dim=1)
             expected_v = torch.cat(all_values, dim=1)
-            torch.testing.assert_close(cached_k, expected_k)
-            torch.testing.assert_close(cached_v, expected_v)
+            testing.assert_close(cached_k, expected_k)
+            testing.assert_close(cached_v, expected_v)
 
     def test_cache_reset(self, cache: kv_cache.KVCache) -> None:
         """Test cache reset functionality."""

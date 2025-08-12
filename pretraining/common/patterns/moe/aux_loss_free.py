@@ -4,8 +4,8 @@ import typing
 # Third Party
 import jaxtyping
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from torch import nn
+from torch.nn import functional as F
 
 # Project
 from pretraining.common.patterns.moe import core
@@ -60,7 +60,8 @@ class AuxLossFreeMoE(core.MoE):
             [self._create_expert(hidden_dim, intermediate_dim) for _ in range(num_experts)]
         )
 
-        # Load tracking for bias updates
+        # Buffer: tracks cumulative expert load for dynamic bias adjustments
+        # Not a parameter - these are runtime statistics, not learned weights
         self.register_buffer("expert_load", torch.zeros(num_experts))
         self.bias_update_speed = 0.001
 
@@ -104,8 +105,8 @@ class AuxLossFreeMoE(core.MoE):
 
     def _normalize_expert_weights(
         self,
-        scores: jaxtyping.Float[torch.Tensor, "batch seq_len k"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len k"]:
+        scores: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts_per_token"],
+    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len num_experts_per_token"]:
         """
         Normalize expert weights to sum to 1.
 
@@ -115,18 +116,18 @@ class AuxLossFreeMoE(core.MoE):
         score_sum: jaxtyping.Float[torch.Tensor, "batch seq_len 1"]
         score_sum = scores.sum(dim=-1, keepdim=True)
 
-        weights: jaxtyping.Float[torch.Tensor, "batch seq_len k"]
+        weights: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts_per_token"]
         weights = scores / (score_sum + 1e-6)
 
         return weights
 
     def _compute_expert_load(
         self,
-        expert_indices: jaxtyping.Int[torch.Tensor, "batch seq_len k"],
+        expert_indices: jaxtyping.Int[torch.Tensor, "batch seq_len num_experts_per_token"],
     ) -> jaxtyping.Float[torch.Tensor, "num_experts"]:
         """Compute how many tokens are assigned to each expert."""
         # One-hot encode expert assignments
-        one_hot: jaxtyping.Float[torch.Tensor, "batch seq k num_experts"]
+        one_hot: jaxtyping.Float[torch.Tensor, "batch seq num_experts_per_token num_experts"]
         one_hot = F.one_hot(expert_indices, self.num_experts).float()
 
         # Sum across all dimensions to get total load per expert
@@ -137,7 +138,7 @@ class AuxLossFreeMoE(core.MoE):
 
     def _update_load_balancing_bias(
         self,
-        expert_indices: jaxtyping.Int[torch.Tensor, "batch seq_len k"],
+        expert_indices: jaxtyping.Int[torch.Tensor, "batch seq_len num_experts_per_token"],
     ) -> None:
         """
         Update bias terms based on expert load (no auxiliary loss).
@@ -180,14 +181,14 @@ class AuxLossFreeMoE(core.MoE):
 
     def _compute_auxiliary_loss(
         self,
-        expert_indices: jaxtyping.Int[torch.Tensor, "batch seq_len k"],
+        expert_indices: jaxtyping.Int[torch.Tensor, "batch seq_len num_experts_per_token"],
         affinity_scores: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts"],
     ) -> torch.Tensor:
         """Compute complementary sequence-wise auxiliary loss."""
-        batch_size, seq_len, k = expert_indices.shape
+        batch_size, seq_len, num_experts_per_token = expert_indices.shape
 
         # Compute f_i: fraction of tokens assigned to each expert
-        one_hot: jaxtyping.Float[torch.Tensor, "batch seq k num_experts"]
+        one_hot: jaxtyping.Float[torch.Tensor, "batch seq num_experts_per_token num_experts"]
         one_hot = F.one_hot(expert_indices, self.num_experts).float()
 
         indicator: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts"]
@@ -252,11 +253,11 @@ class AuxLossFreeMoE(core.MoE):
         batch_indices = torch.arange(batch_size, device=x.device).unsqueeze(1).unsqueeze(2)
         seq_indices = torch.arange(seq_len, device=x.device).unsqueeze(0).unsqueeze(2)
 
-        top_k_scores: jaxtyping.Float[torch.Tensor, "batch seq_len k"]
+        top_k_scores: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts_per_token"]
         top_k_scores = affinity_scores[batch_indices, seq_indices, top_k_indices]
 
         # Normalize weights
-        expert_weights: jaxtyping.Float[torch.Tensor, "batch seq_len k"]
+        expert_weights: jaxtyping.Float[torch.Tensor, "batch seq_len num_experts_per_token"]
         expert_weights = self._normalize_expert_weights(top_k_scores)
 
         # Initialize routed output

@@ -1,7 +1,7 @@
 # Third Party
 import jaxtyping
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class SingleTokenPredictionHead(nn.Module):

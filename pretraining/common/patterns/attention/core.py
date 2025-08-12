@@ -5,9 +5,9 @@ import typing
 # Third Party
 import jaxtyping
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from torch import nn
 from torch.nn import attention as torch_attention
+from torch.nn import functional as F
 
 # Project
 from pretraining.common.base import attention

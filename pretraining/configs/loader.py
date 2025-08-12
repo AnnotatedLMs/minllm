@@ -43,8 +43,8 @@ def load_training_config(
     with open(config_path) as f:
         config_dict = yaml.safe_load(f)
 
-    # Parse training config
-    training_config = trainer_configs.TrainingLoopConfig(**config_dict["training"])
+    # Parse training config using model_validate for proper type conversion
+    training_config = trainer_configs.TrainingLoopConfig.model_validate(config_dict["training"])
 
     # Create the complete trainer config
     trainer_config = core.TrainerConfig(llm=model_config, training=training_config)

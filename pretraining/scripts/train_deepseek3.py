@@ -1,34 +1,7 @@
-#!/usr/bin/env python3
-"""
-Training script for DeepSeek 3 models.
-
-Entry point flow:
-1. Parse command line arguments for config path
-2. Load training configuration with DeepSeek 3 specific model config
-3. Initialize multiprocessing with spawn method
-4. Branch based on execution strategy (SINGLE vs DDP)
-5. For DDP: verify torchrun environment, initialize process group
-6. Run main training function
-7. Cleanup distributed resources if using DDP
-
-Main training flow:
-1. Setup device based on execution strategy
-2. Initialize logging for current rank
-3. Set random seeds for reproducibility
-4. Build DeepSeek 3 model from config (includes MTP heads)
-5. Wrap model (DDP for multi-GPU, SingleAccelerator for single)
-6. Create optimizer and learning rate scheduler
-7. Load checkpoint if resuming (main process only)
-8. Build data pipeline: dataset → iterable wrapper → MTP collator → dataloader
-9. Create loss handler and evaluator
-10. Initialize trainer with all components
-11. Run training loop with periodic evaluation
-12. Save final checkpoint and model-only checkpoint
-"""
-
 # Standard Library
 import argparse
 import os
+import pathlib
 
 # Third Party
 import torch
@@ -44,12 +17,12 @@ from pretraining.data import collator
 from pretraining.trainer import llm_trainer
 from pretraining.utils import logger as logger_utils
 from pretraining.utils import torch_utils
-from pretraining.utils.training import checkpoint
-from pretraining.utils.training import distributed
+from pretraining.utils.training import dist_utils
 from pretraining.utils.training import evaluation
 from pretraining.utils.training import launcher
 from pretraining.utils.training import loss
 from pretraining.utils.training import lr_scheduler
+from pretraining.utils.training import model_wrapper
 from pretraining.utils.training import optimizer
 
 
@@ -57,7 +30,7 @@ def main(trainer_config: core.TrainerConfig) -> None:
     """Main training function that runs after distributed setup."""
     device = trainer_config.training.execution.setup_device()
 
-    logger_utils.setup_logging(rank=distributed.get_global_rank())
+    logger_utils.setup_logging(rank=dist_utils.get_global_rank())
     log = logger_utils.get_logger(__name__)
 
     log.info(f"Using device: {device}")
@@ -66,21 +39,31 @@ def main(trainer_config: core.TrainerConfig) -> None:
     torch_utils.seed_all(trainer_config.training.seed)
 
     log.info("Building DeepSeek 3 model...")
-    model = deepseek3.DeepSeek3(trainer_config.llm)
+    model = deepseek3.DeepSeek3.from_config(trainer_config.llm)
 
-    model = model.to(device)
+    # Move model to device (FSDP handles this internally)
+    if trainer_config.training.execution.strategy != execution_configs.ExecutionStrategy.FSDP:
+        model = model.to(device)
 
+    # Wrap model based on execution strategy
+    log.info(f"Wrapping model with {trainer_config.training.execution.strategy.value}...")
+    dist_model = model_wrapper.wrap_model(
+        model,
+        trainer_config.training.execution,
+        trainer_config.training.precision_dtype,
+    )
+
+    # Initialize parameters if needed (following OLMo's pattern)
+    # When param_init_fn is None, FSDP will call reset_parameters() automatically
+    # For DDP or when using PyTorch >= 2.1.0 with FSDP, we need to call it manually
     if trainer_config.training.execution.strategy == execution_configs.ExecutionStrategy.DDP:
-        log.info("Wrapping model with DDP...")
+        model.reset_parameters()
+    elif trainer_config.training.execution.strategy == execution_configs.ExecutionStrategy.FSDP:
+        # Third Party
+        import packaging.version
 
-        dist_model = torch.nn.parallel.DistributedDataParallel(
-            model,
-            device_ids=[device.index] if device.type == "cuda" else None,
-            find_unused_parameters=trainer_config.training.execution.ddp.find_unused_params,
-        )
-
-    else:  # SINGLE
-        dist_model = distributed.SingleAccelerator(model)
+        if packaging.version.parse(torch.__version__) >= packaging.version.parse("2.1.0"):
+            model.reset_parameters()
 
     optim = optimizer.OptimizerFactory.create_from_config(
         dist_model, trainer_config.training.optimizer, device_type=device.type
@@ -92,26 +75,14 @@ def main(trainer_config: core.TrainerConfig) -> None:
         num_training_steps=trainer_config.training.max_iters,
     )
 
+    # We'll load checkpoint after creating trainer
     start_index = 0
     epoch = 0
-    checkpoint_data = None
-
-    checkpointer = None
-    if distributed.is_main_process():
-        checkpointer = checkpoint.Checkpointer(trainer_config.training.checkpoint)
-        checkpoint_data = checkpointer.load_checkpoint(str(device))
-        if checkpoint_data is not None:
-            log.info("Found checkpoint, will resume training...")
-            if hasattr(checkpoint_data, "training_state_dict"):
-                start_index = checkpoint_data.training_state_dict.get("tokens_seen", 0)
-                epoch = checkpoint_data.training_state_dict.get("epoch", 0)
-
-    distributed.barrier()
 
     log.info("Setting up data pipeline...")
 
     train_dataset = builder.build_memmap_dataset(
-        config=trainer_config.training.data,
+        data_config=trainer_config.training.data,
         split="train",
         chunk_size=trainer_config.training.batch.sequence_length,
     )
@@ -139,7 +110,7 @@ def main(trainer_config: core.TrainerConfig) -> None:
     log.info("Setting up validation data...")
 
     val_dataset = builder.build_memmap_dataset(
-        config=trainer_config.training.data,
+        data_config=trainer_config.training.data,
         split="val",
         chunk_size=trainer_config.training.batch.sequence_length,
     )
@@ -170,7 +141,7 @@ def main(trainer_config: core.TrainerConfig) -> None:
     trainer = llm_trainer.LLMTrainer(
         model=model,
         dist_model=dist_model,
-        config=trainer_config.training,
+        config=trainer_config,  # Pass full config now
         optimizer=optim,
         scheduler=scheduler,
         loss_handler=loss_handler,
@@ -178,18 +149,28 @@ def main(trainer_config: core.TrainerConfig) -> None:
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         device=device,
-        rank=distributed.get_global_rank(),
-        world_size=distributed.get_world_size(),
+        rank=dist_utils.get_global_rank(),
+        world_size=dist_utils.get_world_size(),
     )
 
     trainer.setup()
 
-    if checkpoint_data is not None and distributed.is_main_process():
-        log.info("Loading checkpoint...")
-        trainer.load_checkpoint_data(checkpoint_data)
-        log.info(f"Resumed from iteration {trainer.state.iteration}")
+    # Try to load checkpoint if resuming
+    if trainer_config.training.checkpoint.resume_from or (
+        trainer_config.training.checkpoint.save_dir
+        and pathlib.Path(trainer_config.training.checkpoint.save_dir).exists()
+    ):
+        if trainer.load_checkpoint():
+            log.info(f"Resumed from iteration {trainer.state.iteration}")
+            # Update start_index and epoch from loaded state
+            if hasattr(trainer.state, "training_state"):
+                start_index = trainer.state.training_state.get("tokens_seen", 0)
+                epoch = trainer.state.training_state.get("epoch", 0)
+        else:
+            log.info("No checkpoint found, starting from scratch")
 
-    distributed.barrier()
+    # Synchronize all ranks before starting training
+    dist_utils.barrier()
 
     try:
         log.info("Starting training...")
@@ -204,19 +185,12 @@ def main(trainer_config: core.TrainerConfig) -> None:
         raise
 
     finally:
-        if distributed.is_main_process() and checkpointer is not None:
+        # Save final checkpoint
+        if dist_utils.is_main_process():
             log.info("Saving final checkpoint...")
-            checkpoint_data = trainer.get_checkpoint_data()
-            checkpointer.save_checkpoint(checkpoint_data)
-
-            checkpointer.save_model_only(
-                model.state_dict(),
-                {
-                    "iteration": trainer.state.iteration,
-                    "val_loss": trainer.state.best_val_loss,
-                    "config": trainer_config.llm.model_dump(),
-                },
-            )
+        checkpoint_path = trainer.save_checkpoint()
+        if dist_utils.is_main_process():
+            log.info(f"Final checkpoint saved to {checkpoint_path}")
 
         # Clean up trainer resources (including wandb)
         trainer.cleanup()
@@ -246,4 +220,4 @@ if __name__ == "__main__":
         try:
             main(trainer_config)
         finally:
-            distributed.cleanup_ddp()
+            dist_utils.cleanup_ddp()

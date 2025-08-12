@@ -1,5 +1,5 @@
 # Third Party
-import torch.nn as nn
+from torch import nn
 
 # Project
 from pretraining.common.patterns.attention import multi_head

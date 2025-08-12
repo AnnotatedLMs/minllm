@@ -4,7 +4,7 @@ import typing
 
 # Third Party
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class BaseTorchModule(nn.Module, abc.ABC):

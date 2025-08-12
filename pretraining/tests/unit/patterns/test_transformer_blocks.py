@@ -7,8 +7,7 @@ Tests GPT2TransformerBlock, Llama3TransformerBlock, and DeepSeek3TransformerBloc
 # Third Party
 import pytest
 import torch
-import torch.nn as nn
-import torch.testing
+from torch import nn
 
 # Project
 from pretraining.common.patterns.blocks import deepseek3
@@ -16,7 +15,6 @@ from pretraining.common.patterns.blocks import gpt2
 from pretraining.common.patterns.blocks import llama3
 from pretraining.common.patterns.position import core
 from pretraining.common.patterns.position import rope_partial
-from pretraining.configs.model.components import position
 
 
 class TestGPT2TransformerBlock:
@@ -63,8 +61,7 @@ class TestLlama3TransformerBlock:
     @pytest.fixture
     def rope_module(self) -> core.PrecomputedRoPE:
         """Create RoPE module for Llama."""
-        config = position.RoPEConfig(theta=10000.0)
-        return core.PrecomputedRoPE(dim=16, config=config)  # 16 = head_dim
+        return core.PrecomputedRoPE(dim=16, theta=10000.0, max_seq_len=512)  # 16 = head_dim
 
     @pytest.fixture
     def llama_block(self, rope_module: core.PrecomputedRoPE) -> llama3.Llama3TransformerBlock:
@@ -105,8 +102,7 @@ class TestDeepSeek3TransformerBlock:
     @pytest.fixture
     def partial_rope(self) -> rope_partial.PartialRoPE:
         """Create partial RoPE for DeepSeek."""
-        config = position.RoPEConfig(theta=10000.0)
-        return rope_partial.PartialRoPE(dim=64, config=config)
+        return rope_partial.PartialRoPE(dim=64, theta=10000.0)
 
     @pytest.fixture
     def deepseek_block(

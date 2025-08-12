@@ -5,7 +5,7 @@ import sys
 import typing
 
 # Third Party
-import torch.distributed as dist
+from torch import distributed as dist
 
 
 def setup_logging(

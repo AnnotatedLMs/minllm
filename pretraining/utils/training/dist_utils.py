@@ -4,8 +4,8 @@ import typing
 
 # Third Party
 import torch
-import torch.distributed as dist
-import torch.nn
+from torch import distributed
+from torch import nn
 
 
 def is_distributed() -> bool:
@@ -14,7 +14,7 @@ def is_distributed() -> bool:
     Returns True when running under torchrun/torch.distributed.launch,
     False when running single-GPU or CPU training.
     """
-    return dist.is_available() and dist.is_initialized()
+    return distributed.is_available() and distributed.is_initialized()
 
 
 def get_world_size() -> int:
@@ -28,7 +28,7 @@ def get_world_size() -> int:
     Used to calculate global batch size and learning rate scaling.
     """
     if is_distributed():
-        return dist.get_world_size()
+        return distributed.get_world_size()
     else:
         return 1
 
@@ -45,7 +45,7 @@ def get_global_rank() -> int:
     - Machine 1: ranks 4, 5, 6, 7
     """
     if is_distributed():
-        return int(os.environ.get("RANK") or dist.get_rank())
+        return int(os.environ.get("RANK") or distributed.get_rank())
     else:
         return 0
 
@@ -88,7 +88,7 @@ def barrier() -> None:
     slower ones are still loading, causing hangs or crashes.
     """
     if is_distributed():
-        dist.barrier()
+        distributed.barrier()
 
 
 def synchronize_value(
@@ -104,9 +104,9 @@ def synchronize_value(
 
     The broadcast operation sends rank 0's value to all other ranks.
     """
-    if dist.is_available() and dist.is_initialized():
+    if distributed.is_available() and distributed.is_initialized():
         value_tensor = torch.tensor(value, device=device)
-        dist.broadcast(value_tensor, 0)
+        distributed.broadcast(value_tensor, 0)
         return value_tensor.item()  # type: ignore
     else:
         return value
@@ -127,8 +127,8 @@ def cleanup_ddp() -> None:
 
     Especially important when running multiple experiments in sequence.
     """
-    if dist.is_initialized():
-        dist.destroy_process_group()
+    if distributed.is_initialized():
+        distributed.destroy_process_group()
 
 
 def is_main_process() -> bool:
@@ -136,12 +136,12 @@ def is_main_process() -> bool:
     Check if this is the main process (rank 0).
     Used to ensure only one process handles logging, checkpointing, etc.
     """
-    if not dist.is_initialized():
+    if not distributed.is_initialized():
         return True
-    return dist.get_rank() == 0
+    return distributed.get_rank() == 0
 
 
-class SingleAccelerator(torch.nn.Module):
+class SingleAccelerator(nn.Module):
     """Wrapper for single-device training to provide consistent interface with DDP.
 
     This matches OLMo's pattern where the trainer always receives a wrapped model,
@@ -150,7 +150,7 @@ class SingleAccelerator(torch.nn.Module):
 
     process_group = None
 
-    def __init__(self, module: torch.nn.Module):
+    def __init__(self, module: nn.Module):
         super().__init__()
         self.module = module
 

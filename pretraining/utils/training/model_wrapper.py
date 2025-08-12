@@ -1,25 +1,27 @@
 # Standard Library
+import functools
 import typing
 
 # Third Party
 import packaging.version
 import torch
-import torch.distributed.device_mesh
-import torch.nn
-import torch.nn.parallel
+from torch import nn
+from torch.distributed import device_mesh
 from torch.distributed import fsdp
+from torch.distributed.fsdp import wrap
+from torch.nn import parallel
 
 # Project
 from pretraining.configs.training import execution_configs
 from pretraining.utils import torch_utils
-from pretraining.utils.training import distributed
+from pretraining.utils.training import dist_utils
 
 
 def wrap_model(
-    model: torch.nn.Module,
+    model: nn.Module,
     execution_config: execution_configs.ExecutionConfig,
     mixed_precision_dtype: typing.Optional[torch.dtype] = None,
-) -> torch.nn.Module:
+) -> nn.Module:
     """Wrap model based on execution strategy (DDP, FSDP, or Single).
 
     Args:
@@ -39,17 +41,17 @@ def wrap_model(
         return _wrap_fsdp(model, execution_config.fsdp, mixed_precision_dtype)
 
     else:  # SINGLE
-        return distributed.SingleAccelerator(model)
+        return dist_utils.SingleAccelerator(model)
 
 
 def _wrap_ddp(
-    model: torch.nn.Module,
+    model: nn.Module,
     ddp_config: execution_configs.DDPConfig,
-) -> torch.nn.parallel.DistributedDataParallel:
+) -> parallel.DistributedDataParallel:
     """Wrap model with DistributedDataParallel."""
     device = torch.cuda.current_device() if torch.cuda.is_available() else None
 
-    return torch.nn.parallel.DistributedDataParallel(
+    return parallel.DistributedDataParallel(
         model,
         device_ids=[device] if device is not None else None,
         find_unused_parameters=ddp_config.find_unused_params,
@@ -58,11 +60,15 @@ def _wrap_ddp(
 
 
 def _wrap_fsdp(
-    model: torch.nn.Module,
+    model: nn.Module,
     fsdp_config: execution_configs.FSDPConfig,
     mixed_precision_dtype: typing.Optional[torch.dtype] = None,
 ) -> fsdp.FullyShardedDataParallel:
     """Wrap model with FullyShardedDataParallel."""
+
+    # Prepare model for FSDP (e.g., create block groups if needed)
+    if hasattr(model, "prepare_for_fsdp"):
+        model.prepare_for_fsdp(fsdp_config)
 
     # Get wrap policy from model
     if not hasattr(model, "get_fsdp_wrap_policy"):
@@ -70,6 +76,16 @@ def _wrap_fsdp(
             f"Model {type(model).__name__} must implement get_fsdp_wrap_policy() method for FSDP"
         )
     wrap_policy = model.get_fsdp_wrap_policy(fsdp_config.wrapping_strategy)
+
+    # Handle SIZE_BASED strategy which returns None and needs PyTorch's auto wrap
+    if (
+        wrap_policy is None
+        and fsdp_config.wrapping_strategy == execution_configs.FSDPWrapStrategy.SIZE_BASED
+    ):
+        wrap_policy = functools.partial(
+            wrap.size_based_auto_wrap_policy,
+            min_num_params=fsdp_config.min_params_size,
+        )
 
     # Setup mixed precision if configured
     mixed_precision = None
@@ -111,7 +127,7 @@ def _wrap_fsdp(
         auto_wrap_policy=wrap_policy,
         use_orig_params=fsdp_config.use_orig_params,
         limit_all_gathers=fsdp_config.limit_all_gathers,
-        device_id=distributed.get_local_rank(),
+        device_id=dist_utils.get_local_rank(),
         param_init_fn=param_init_fn,
         backward_prefetch=fsdp.BackwardPrefetch.BACKWARD_PRE
         if fsdp_config.backward_prefetch
@@ -121,29 +137,37 @@ def _wrap_fsdp(
         **hybrid_sharding_kwargs,
     )
 
-    # Initialize parameters if needed
-    if param_init_fn is not None:
-        model.reset_parameters()
+    # Note: when param_init_fn is None, FSDP will call reset_parameters() automatically
+    # We don't call reset_parameters() here - it should be done in the training script
+    # after wrapping if needed (when param_init_fn is not None)
+
+    # Setup activation checkpointing if configured
+    if fsdp_config.activation_checkpointing is not None:
+        if hasattr(wrapped_model, "set_activation_checkpointing"):
+            wrapped_model.set_activation_checkpointing(
+                fsdp_config.activation_checkpointing,
+                reentrant=fsdp_config.activation_checkpointing_reentrant,
+            )
 
     return wrapped_model
 
 
 def _setup_hybrid_sharding_device_mesh(
     fsdp_config: execution_configs.FSDPConfig,
-) -> torch.distributed.device_mesh.DeviceMesh:
+) -> device_mesh.DeviceMesh:
     """Setup device mesh for hybrid sharding."""
     num_model_replicas = fsdp_config.hybrid_sharding_num_model_replicas or (
-        distributed.get_world_size() // distributed.get_local_world_size()
+        dist_utils.get_world_size() // dist_utils.get_local_world_size()
     )
 
-    if distributed.get_world_size() % num_model_replicas != 0:
+    if dist_utils.get_world_size() % num_model_replicas != 0:
         raise ValueError(
             f"hybrid_sharding_num_model_replicas ({num_model_replicas}) "
-            f"must divide world size ({distributed.get_world_size()})"
+            f"must divide world size ({dist_utils.get_world_size()})"
         )
 
-    return torch.distributed.device_mesh.init_device_mesh(
-        "cuda", (num_model_replicas, distributed.get_world_size() // num_model_replicas)
+    return device_mesh.init_device_mesh(
+        "cuda", (num_model_replicas, dist_utils.get_world_size() // num_model_replicas)
     )
 
 
@@ -165,7 +189,7 @@ def _get_param_init_fn() -> typing.Optional[typing.Callable]:
     """Get parameter initialization function for FSDP based on PyTorch version."""
     if packaging.version.parse(torch.__version__) >= packaging.version.parse("2.1.0"):
         # This prevents any parameters from being initialized twice
-        def dummy_init_fn(module: torch.nn.Module) -> None:
+        def dummy_init_fn(module: nn.Module) -> None:
             module.to_empty(device=torch_utils.get_default_device())
 
         return dummy_init_fn

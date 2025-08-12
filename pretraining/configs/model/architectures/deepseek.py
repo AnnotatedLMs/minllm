@@ -65,18 +65,22 @@ class DeepSeek3Config(base.BaseLLMConfig):
 
         # Transform transformer components to concrete types
         trans_dict = model_dict["transformer"]
-        trans_dict["normalization"] = normalization.RMSNormConfig(**trans_dict["normalization"])
-        trans_dict["attention"] = attention.MultiHeadLatentAttentionConfig(
-            **trans_dict["attention"]
+        trans_dict["normalization"] = normalization.RMSNormConfig.model_validate(
+            trans_dict["normalization"]
+        )
+        trans_dict["attention"] = attention.MultiHeadLatentAttentionConfig.model_validate(
+            trans_dict["attention"]
         )
 
         # Parse RoPE config
-        trans_dict["rope"] = position.RoPEConfig(**trans_dict["rope"])
+        trans_dict["rope"] = position.RoPEConfig.model_validate(trans_dict["rope"])
 
         # Parse MTP config
-        model_dict["mtp"] = heads.MultiTokenPredictionConfig(**model_dict["mtp"])
+        model_dict["mtp"] = heads.MultiTokenPredictionConfig.model_validate(model_dict["mtp"])
 
         # Create DeepSeek3TransformerConfig
-        model_dict["transformer"] = transformer.DeepSeek3TransformerConfig(**trans_dict)
+        model_dict["transformer"] = transformer.DeepSeek3TransformerConfig.model_validate(
+            trans_dict
+        )
 
-        return cls(**model_dict)
+        return cls.model_validate(model_dict)

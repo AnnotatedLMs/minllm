@@ -10,22 +10,36 @@
 
   But I provide it here in case anyone wants to peek at stuff.
 
-  ## Installation Guide
+## Installation Guide
 
-  1. **Install uv (Python package manager)**
-     ```bash
-     # Follow instructions at https://github.com/astral-sh/uv
-     curl -LsSf https://astral.sh/uv/install.sh | sh
+### Prerequisites
 
-  2. Set up virtual environment
-  uv venv
-  3. Activate virtual environment
-  # On macOS/Linux:
-  source .venv/bin/activate
-  4. Install dependencies
-  uv sync
-  5. Install pre-commit hooks
-  uv run pre-commit install
+Install uv (Python package manager):
+```bash
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Or using Homebrew
+brew install uv
+
+### Quick Setup
+Clone the repository and set up the environment:
+```bash
+#
+git clone
+
+# Install all dependencies
+uv sync
+
+uv run pre-commit install
+```
+
+### Optional Setup
+
+```bash
+# Install only production dependencies (no dev tools)
+uv sync --no-dev
+```
 
   Directory Structure
 

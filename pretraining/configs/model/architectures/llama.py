@@ -52,16 +52,20 @@ class Llama3Config(base.BaseLLMConfig):
 
         # Transform transformer components to concrete types
         trans_dict = model_dict["transformer"]
-        trans_dict["normalization"] = normalization.RMSNormConfig(**trans_dict["normalization"])
-        trans_dict["attention"] = attention.GroupedQueryAttentionConfig(**trans_dict["attention"])
+        trans_dict["normalization"] = normalization.RMSNormConfig.model_validate(
+            trans_dict["normalization"]
+        )
+        trans_dict["attention"] = attention.GroupedQueryAttentionConfig.model_validate(
+            trans_dict["attention"]
+        )
 
         # Parse RoPE config with optional scaling
         rope_dict = trans_dict["rope"]
         if "scaling" in rope_dict and rope_dict["scaling"] is not None:
-            rope_dict["scaling"] = position.RoPEScalingConfig(**rope_dict["scaling"])
-        trans_dict["rope"] = position.RoPEConfig(**rope_dict)
+            rope_dict["scaling"] = position.RoPEScalingConfig.model_validate(rope_dict["scaling"])
+        trans_dict["rope"] = position.RoPEConfig.model_validate(rope_dict)
 
         # Create Llama3TransformerConfig
-        model_dict["transformer"] = transformer.Llama3TransformerConfig(**trans_dict)
+        model_dict["transformer"] = transformer.Llama3TransformerConfig.model_validate(trans_dict)
 
-        return cls(**model_dict)
+        return cls.model_validate(model_dict)

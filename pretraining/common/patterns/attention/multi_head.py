@@ -4,7 +4,7 @@ import typing
 # Third Party
 import jaxtyping
 import torch
-import torch.nn as nn
+from torch import nn
 
 # Project
 from pretraining.common.patterns.attention import core
@@ -50,6 +50,8 @@ class MultiHeadAttention(core.Attention):
         # Only create bias buffer if we're not using Flash Attention
         # (Flash handles causal masking internally)
         if not self.use_flash_attention:
+            # Buffer: fixed causal mask that prevents attention to future tokens
+            # Not a learned parameter - just a precomputed mask for efficiency
             self.register_buffer(
                 "bias",
                 torch.tril(torch.ones(max_seq_length, max_seq_length)).view(

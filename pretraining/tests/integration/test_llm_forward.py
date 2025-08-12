@@ -7,7 +7,6 @@ across different architectures.
 
 # Third Party
 import torch
-import torch.testing
 
 # Project
 from pretraining.common.patterns.architectures import deepseek3
@@ -25,7 +24,6 @@ class TestLLMForwardMethods:
 
         # Create random inputs
         input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
-        targets = torch.randint(0, vocab_size, (batch_size, seq_len))
 
         # Put model in training mode
         gpt2_debug_model.train()
@@ -64,7 +62,6 @@ class TestLLMForwardMethods:
         vocab_size = llama_debug_model.vocab_size
 
         input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
-        targets = torch.randint(0, vocab_size, (batch_size, seq_len))
 
         # Put model in training mode
         llama_debug_model.train()
@@ -115,7 +112,6 @@ class TestLLMForwardMethods:
         vocab_size = deepseek_debug_model.vocab_size
 
         input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
-        targets = torch.randint(0, vocab_size, (batch_size, seq_len))
 
         # Put model in training mode
         deepseek_debug_model.train()

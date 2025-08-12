@@ -52,15 +52,21 @@ class GPT2Config(base.BaseLLMConfig):
 
         model_dict = config_dict["model"]
 
-        # GPT2 always uses GPT2InitConfig
-        model_dict["weight_init"] = initialization.GPT2InitConfig(**model_dict["weight_init"])
+        # GPT2 uses GPT2InitConfig
+        model_dict["weight_init"] = initialization.GPT2InitConfig.model_validate(
+            model_dict["weight_init"]
+        )
 
-        # GPT2 always uses LayerNorm and standard multi-head attention
+        # GPT2 uses LayerNorm and standard multi-head attention
         trans_dict = model_dict["transformer"]
-        trans_dict["normalization"] = normalization.LayerNormConfig(**trans_dict["normalization"])
-        trans_dict["attention"] = attention.MultiHeadAttentionConfig(**trans_dict["attention"])
+        trans_dict["normalization"] = normalization.LayerNormConfig.model_validate(
+            trans_dict["normalization"]
+        )
+        trans_dict["attention"] = attention.MultiHeadAttentionConfig.model_validate(
+            trans_dict["attention"]
+        )
 
         # Create GPT2TransformerConfig
-        model_dict["transformer"] = transformer.GPT2TransformerConfig(**trans_dict)
+        model_dict["transformer"] = transformer.GPT2TransformerConfig.model_validate(trans_dict)
 
-        return cls(**model_dict)
+        return cls.model_validate(model_dict)

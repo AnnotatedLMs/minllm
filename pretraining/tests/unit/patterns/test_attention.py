@@ -7,7 +7,7 @@ Tests MultiHeadAttention, GroupedQueryAttention, and MultiHeadLatentAttention.
 # Third Party
 import pytest
 import torch
-import torch.testing
+from torch import testing
 
 # Project
 from pretraining.common.patterns.attention import grouped_query
@@ -16,7 +16,6 @@ from pretraining.common.patterns.attention import multi_latent
 from pretraining.common.patterns.cache import kv_cache
 from pretraining.common.patterns.position import core
 from pretraining.common.patterns.position import rope_partial
-from pretraining.configs.model.components import position
 
 
 # Helper to check Flash Attention availability
@@ -102,7 +101,7 @@ class TestMultiHeadAttention:
         out1 = mha(x)
         out2 = mha(x)
 
-        torch.testing.assert_close(out1, out2)
+        testing.assert_close(out1, out2)
 
 
 class TestGroupedQueryAttention:
@@ -111,10 +110,9 @@ class TestGroupedQueryAttention:
     @pytest.fixture
     def rope_module(self) -> core.PrecomputedRoPE:
         """Create RoPE module for GQA."""
-        config = position.RoPEConfig(theta=10000.0)
         return core.PrecomputedRoPE(
             dim=16,  # head_dim for GQA with hidden_dim=128, num_heads=8
-            config=config,
+            theta=10000.0,
             max_seq_len=512,
         )
 
@@ -160,7 +158,7 @@ class TestGroupedQueryAttention:
         # Check that values are actually repeated
         for i in range(2):  # For each original KV head
             for j in range(4):  # For each repetition
-                torch.testing.assert_close(repeated[:, i * 4 + j], kv_heads[:, i])
+                testing.assert_close(repeated[:, i * 4 + j], kv_heads[:, i])
 
     def test_gqa_with_position_offset(self, gqa: grouped_query.GroupedQueryAttention) -> None:
         """Test GQA with position offset for KV caching."""
@@ -211,8 +209,7 @@ class TestMultiHeadLatentAttention:
     @pytest.fixture
     def partial_rope(self) -> rope_partial.PartialRoPE:
         """Create PartialRoPE for MLA."""
-        config = position.RoPEConfig(theta=10000.0)
-        return rope_partial.PartialRoPE(dim=64, config=config)
+        return rope_partial.PartialRoPE(dim=64, theta=10000.0)
 
     @pytest.fixture
     def mla(self, partial_rope: rope_partial.PartialRoPE) -> multi_latent.MultiHeadLatentAttention:
@@ -303,7 +300,7 @@ class TestMultiHeadLatentAttention:
         # Manually compute expected scores
         expected = torch.matmul(q, k.transpose(-2, -1)) / expected_scale
 
-        torch.testing.assert_close(scores, expected)
+        testing.assert_close(scores, expected)
 
 
 class TestAttentionMasking:
@@ -324,7 +321,7 @@ class TestAttentionMasking:
 
         # Check it's lower triangular
         expected = torch.tril(torch.ones(5, 5)).bool()
-        torch.testing.assert_close(mask, expected)
+        testing.assert_close(mask, expected)
 
     @pytestmark_flash
     def test_attention_mask_application(self) -> None:

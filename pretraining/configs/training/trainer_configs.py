@@ -17,6 +17,7 @@ from pretraining.configs.training import execution_configs
 from pretraining.configs.training import loss_configs
 from pretraining.configs.training import lr_configs
 from pretraining.configs.training import optimizer_configs
+from pretraining.configs.training import precision_configs
 from pretraining.configs.training import system_configs
 from pretraining.configs.training import wandb_configs
 
@@ -50,8 +51,9 @@ class TrainingLoopConfig(base.BaseConfig):
     gradient_accumulation_steps: int = pydantic.Field(
         gt=0, default=1, description="Number of batches to accumulate before updating weights"
     )
-    mixed_precision: bool = pydantic.Field(
-        False, description="Whether to use automatic mixed precision (AMP) training"
+    precision: precision_configs.PrecisionType = pydantic.Field(
+        precision_configs.PrecisionType.FP32,
+        description="Training precision (fp32, amp_bf16, amp_fp16)",
     )
 
     # Evaluation and checkpointing
@@ -83,26 +85,29 @@ class TrainingLoopConfig(base.BaseConfig):
 
     @property
     def precision_dtype(self) -> typing.Optional[torch.dtype]:
-        """Get the precision dtype for mixed precision training."""
-        if not self.mixed_precision:
+        """Get the precision dtype for training."""
+        if self.precision == precision_configs.PrecisionType.FP32:
             return None
-        # Default to bfloat16 if available, otherwise float16
-        if torch.cuda.is_bf16_supported():
+        elif self.precision == precision_configs.PrecisionType.AMP_BF16:
             return torch.bfloat16
-        return torch.float16
+        elif self.precision == precision_configs.PrecisionType.AMP_FP16:
+            return torch.float16
+        else:
+            return None
 
     @property
     def fsdp_precision(self) -> typing.Optional[fsdp.MixedPrecision]:
         """Get FSDP mixed precision config based on execution settings."""
         if self.execution.strategy != execution_configs.ExecutionStrategy.FSDP:
             return None
-        if not self.mixed_precision or self.execution.fsdp is None:
+        if self.precision == precision_configs.PrecisionType.FP32 or self.execution.fsdp is None:
             return None
 
         dtype = self.precision_dtype
         if dtype is None:
             return None
 
+        # Map FSDP precision mode with our precision type
         if self.execution.fsdp.precision == execution_configs.FSDPPrecision.PURE:
             return fsdp.MixedPrecision(
                 param_dtype=dtype,

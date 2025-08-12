@@ -4,7 +4,7 @@ import typing
 # Third Party
 import jaxtyping
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class KVCache(nn.Module):
@@ -40,10 +40,12 @@ class KVCache(nn.Module):
         super().__init__()
 
         cache_shape = (batch_size, max_seq_length, n_kv_heads, head_dim)
+        # Buffers: store intermediate K/V activations across generation steps
+        # Not parameters since these are computed activations, not learned weights
         self.register_buffer("cache_k", torch.zeros(cache_shape, dtype=dtype, device=device))
         self.register_buffer("cache_v", torch.zeros(cache_shape, dtype=dtype, device=device))
 
-        # Track the current position in the cache
+        # Buffer: tracks current position in cache for sequential generation
         self.register_buffer("cache_position", torch.zeros(1, dtype=torch.long, device=device))
 
     def update(

@@ -4,7 +4,7 @@ import typing
 # Third Party
 import jaxtyping
 import torch
-import torch.nn as nn
+from torch import nn
 
 # Project
 from pretraining.common.base import core

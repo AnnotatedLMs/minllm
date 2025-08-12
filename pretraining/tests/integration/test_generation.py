@@ -35,7 +35,7 @@ class TestGeneration:
         # Create input tokens (batch_size=2, seq_len=5)
         batch_size = 2
         seq_len = 5
-        vocab_size = config.llm.token_embedding.vocab_size
+        vocab_size = config.llm.vocab_size
         input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
 
         # Generate tokens
@@ -65,7 +65,7 @@ class TestGeneration:
         # Create input tokens
         batch_size = 1
         seq_len = 8
-        vocab_size = config.llm.token_embedding.vocab_size
+        vocab_size = config.llm.vocab_size
         input_ids = torch.randint(0, vocab_size, (batch_size, seq_len))
 
         # Generate tokens

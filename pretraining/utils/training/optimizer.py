@@ -5,7 +5,7 @@ import typing
 
 # Third Party
 import torch
-import torch.nn as nn
+from torch import nn
 from torch import optim
 
 # Project

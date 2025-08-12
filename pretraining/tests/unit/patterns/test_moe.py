@@ -7,8 +7,8 @@ Tests AuxLossFreeMoE implementation.
 # Third Party
 import pytest
 import torch
-import torch.nn as nn
-import torch.testing
+from torch import nn
+from torch import testing
 
 # Project
 from pretraining.common.patterns.moe import aux_loss_free
@@ -115,7 +115,7 @@ class TestAuxLossFreeMoE:
         _ = auxfree_moe(x)
 
         # Load shouldn't change in eval mode
-        torch.testing.assert_close(auxfree_moe.expert_load, initial_load)
+        testing.assert_close(auxfree_moe.expert_load, initial_load)
 
     def test_auxfree_moe_forward_and_bias_tracking(
         self, auxfree_moe: aux_loss_free.AuxLossFreeMoE
@@ -142,7 +142,7 @@ class TestAuxLossFreeMoE:
         auxfree_moe.eval()
         current_load = auxfree_moe.expert_load.clone()
         _ = auxfree_moe(x)
-        torch.testing.assert_close(auxfree_moe.expert_load, current_load)
+        testing.assert_close(auxfree_moe.expert_load, current_load)
 
     def test_auxfree_moe_gating(self, auxfree_moe: aux_loss_free.AuxLossFreeMoE) -> None:
         """Test gating mechanism."""
@@ -167,7 +167,7 @@ class TestAuxLossFreeMoE:
 
         # Check weights sum to approximately 1
         weight_sums = expert_weights.sum(dim=-1)
-        torch.testing.assert_close(weight_sums, torch.ones_like(weight_sums), atol=1e-4, rtol=1e-4)
+        testing.assert_close(weight_sums, torch.ones_like(weight_sums), atol=1e-4, rtol=1e-4)
 
         # Check indices are valid
         assert torch.all(expert_indices >= 0)

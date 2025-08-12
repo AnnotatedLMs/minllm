@@ -4,7 +4,7 @@ import typing
 # Third Party
 import jaxtyping
 import torch
-import torch.nn as nn
+from torch import nn
 
 # Project
 from pretraining.common.base import llm
@@ -13,9 +13,10 @@ from pretraining.common.patterns.blocks import llama3 as llama3_blocks
 from pretraining.common.patterns.cache import kv_cache
 from pretraining.common.patterns.position import core
 from pretraining.configs.model.architectures import llama
+from pretraining.utils.training import fsdp_policies
 
 
-class Llama3(llm.BaseLLM):
+class Llama3(llm.BaseLLM, fsdp_policies.FSDPMixin):
     """
     Llama Language Model implementation.
 
@@ -121,7 +122,7 @@ class Llama3(llm.BaseLLM):
 
         return cls(
             # Core dimensions
-            vocab_size=config.token_embedding.vocab_size,
+            vocab_size=config.vocab_size,
             hidden_dim=config.transformer.hidden_dim,
             n_layers=config.transformer.n_layers,
             block_size=config.transformer.block_size,
@@ -255,7 +256,7 @@ class Llama3(llm.BaseLLM):
     @torch.no_grad()
     def generate(
         self,
-        idx: jaxtyping.Int[torch.Tensor, "batch seq"],
+        token_ids: jaxtyping.Int[torch.Tensor, "batch seq"],
         max_new_tokens: int,
         temperature: float = 1.0,
         top_k: typing.Optional[int] = None,
@@ -266,7 +267,7 @@ class Llama3(llm.BaseLLM):
         Generate tokens autoregressively.
 
         Args:
-            idx: Initial prompt tokens [batch, seq]
+            token_ids: Initial prompt tokens [batch, seq]
             max_new_tokens: Number of tokens to generate
             temperature: Sampling temperature
             top_k: Top-k sampling parameter
@@ -276,9 +277,9 @@ class Llama3(llm.BaseLLM):
         Returns:
             Generated token sequence including prompt
         """
-        device = idx.device
-        batch_size = idx.shape[0]
-        seq_len = idx.shape[1]
+        device = token_ids.device
+        batch_size = token_ids.shape[0]
+        seq_len = token_ids.shape[1]
 
         # Install KV cache if requested
         if use_cache:
@@ -295,7 +296,7 @@ class Llama3(llm.BaseLLM):
         if use_cache:
             # Process full prompt with position offset 0
             model_output = self.forward(
-                input_ids=idx,
+                input_ids=token_ids,
                 attention_mask=kwargs.get("attention_mask"),
                 position_offset=position_offset,
             )
@@ -304,14 +305,14 @@ class Llama3(llm.BaseLLM):
         else:
             # Without cache, we'll process the full sequence each time
             model_output = self.forward(
-                input_ids=idx,
+                input_ids=token_ids,
                 attention_mask=kwargs.get("attention_mask"),
                 position_offset=0,
             )
             logits = model_output.logits
 
         # Start generation loop
-        generated = idx
+        generated = token_ids
         for _ in range(max_new_tokens):
             # Get logits for last position
             logits_last = logits[:, -1, :]
@@ -359,3 +360,18 @@ class Llama3(llm.BaseLLM):
             self.clear_kv_cache()
 
         return generated
+
+    def get_fsdp_wrappable_modules(self) -> typing.Set[typing.Type[nn.Module]]:
+        return {llama3_blocks.Llama3TransformerBlock}
+
+    def get_transformer_blocks(self) -> typing.List[nn.Module]:
+        return list(self.blocks)
+
+    def get_fsdp_special_modules(self) -> typing.Dict[str, nn.Module]:
+        special_modules = {}
+        special_modules["token_embeddings"] = self.token_embeddings
+        special_modules["lm_head"] = self.lm_head
+
+        # Note: Not including RoPE as it has minimal parameters
+
+        return special_modules

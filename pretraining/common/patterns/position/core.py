@@ -4,7 +4,7 @@ import typing
 # Third Party
 import jaxtyping
 import torch
-import torch.nn as nn
+from torch import nn
 
 # Project
 from pretraining.common.patterns.position import rope_scaling
@@ -59,10 +59,8 @@ class RoPEBase(nn.Module):
         # Compute and store inverse frequencies
         inv_freq: jaxtyping.Float[torch.Tensor, "dim_half"]
         inv_freq = self._compute_inv_freq(dim, theta)
-        # register_buffer vs nn.Parameter because:
-        # inv_freq is precomputed and fixed - not learned during training
-        # buffers are saved/loaded with the model but not updated by optimizer
-        # buffers move with the model to the correct device automatically
+        # Buffer: precomputed frequencies for RoPE - fixed throughout training
+        # Not a parameter since these are mathematical constants, not learned
         self.register_buffer("inv_freq", inv_freq)
 
     def _compute_inv_freq(
@@ -190,6 +188,8 @@ class PrecomputedRoPE(RoPEBase):
 
         # Precompute and store frequencies for efficiency
         self.max_seq_len = max_seq_len
+        # Buffer: precomputed complex exponentials to avoid recomputation
+        # Stored as buffer for efficiency - computing these on every forward is expensive
         self.register_buffer("freqs_cis", self._precompute_freqs_cis(max_seq_len))
 
     def _apply_rotation(
@@ -221,10 +221,10 @@ class PrecomputedRoPE(RoPEBase):
         )
 
         # Flatten back
-        result: jaxtyping.Float[torch.Tensor, "batch seq heads head_dim"]
-        result = x_out.flatten(3).type_as(x)
+        rotated_flat: jaxtyping.Float[torch.Tensor, "batch seq heads head_dim"]
+        rotated_flat = x_out.flatten(3).type_as(x)
 
-        return result
+        return rotated_flat
 
     def forward(
         self,

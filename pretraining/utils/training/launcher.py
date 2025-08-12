@@ -3,11 +3,11 @@ import datetime
 
 # Third Party
 import torch
-import torch.distributed as dist
-import torch.multiprocessing as mp
+from torch import distributed as dist
+from torch import multiprocessing as mp
 
 # Project
-from pretraining.utils.training import distributed
+from pretraining.utils.training import dist_utils
 
 
 def setup_multiprocessing() -> None:
@@ -60,7 +60,7 @@ def init_ddp_process_group(timeout_minutes: int = 30) -> None:
     backend = "nccl" if torch.cuda.is_available() else "gloo"
 
     if torch.cuda.is_available():
-        local_rank = distributed.get_local_rank()
+        local_rank = dist_utils.get_local_rank()
         torch.cuda.set_device(f"cuda:{local_rank}")
 
     dist.init_process_group(

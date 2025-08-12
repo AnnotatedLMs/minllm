@@ -4,7 +4,7 @@ import typing
 # Third Party
 import jaxtyping
 import torch
-import torch.nn.functional as F
+from torch.nn import functional as F
 
 # Project
 from pretraining.common.base import moe

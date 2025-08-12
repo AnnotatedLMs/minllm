@@ -7,7 +7,7 @@ Tests MLP and MultiplicativeGatedFFN (SwiGLU) implementations.
 # Third Party
 import pytest
 import torch
-import torch.testing
+from torch import testing
 
 # Project
 from pretraining.common.patterns.ffn import gated
@@ -86,7 +86,7 @@ class TestMLP:
         mlp_default.eval()
         out3 = mlp_default(x)
         out4 = mlp_default(x)
-        torch.testing.assert_close(out3, out4)
+        testing.assert_close(out3, out4)
 
 
 class TestMultiplicativeGatedFFN:
@@ -155,7 +155,7 @@ class TestMultiplicativeGatedFFN:
         # Compare with forward pass
         output_forward = swiglu(x)
 
-        torch.testing.assert_close(output_manual, output_forward)
+        testing.assert_close(output_manual, output_forward)
 
     def test_swiglu_different_activations(self) -> None:
         """Test SwiGLU with different activation functions."""

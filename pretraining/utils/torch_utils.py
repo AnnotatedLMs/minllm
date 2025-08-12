@@ -1,19 +1,18 @@
 # Standard Library
 import gc
 import random
-from typing import Optional
-from typing import TypeVar
+import typing
 
 # Third Party
 import numpy as np
 import torch
-import torch.distributed as dist
+from torch import distributed as dist
 
 # Project
-from pretraining.utils.training import distributed
+from pretraining.utils.training import dist_utils
 
-T = TypeVar("T")
-V = TypeVar("V", bool, int, float)
+T = typing.TypeVar("T")
+V = typing.TypeVar("V", bool, int, float)
 
 
 def seed_all(seed: int) -> None:
@@ -76,7 +75,7 @@ def get_default_device() -> torch.device:
         return torch.device("cpu")
 
 
-def peak_gpu_memory(reset: bool = False) -> Optional[float]:
+def peak_gpu_memory(reset: bool = False) -> typing.Optional[float]:
     """Get the peak GPU memory usage in MB across all distributed ranks.
 
     How GPU Memory Tracking Works:
@@ -105,7 +104,7 @@ def peak_gpu_memory(reset: bool = False) -> Optional[float]:
 
     device = torch.device("cuda")
     peak_mb = torch.cuda.max_memory_allocated(device) / 1000000
-    if distributed.is_distributed():
+    if dist_utils.is_distributed():
         peak_mb_tensor = torch.tensor(peak_mb, device=device)
         dist.reduce(peak_mb_tensor, 0, dist.ReduceOp.MAX)
         peak_mb = peak_mb_tensor.item()

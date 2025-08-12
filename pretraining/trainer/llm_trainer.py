@@ -1,24 +1,29 @@
 # Standard Library
 import pathlib
+import shutil
 import time
 import typing
 
 # Third Party
 import torch
-import torch.nn as nn
 import wandb
+from torch import nn
+from torch.distributed import fsdp
 from torch.nn import parallel
 
 # Project
 from pretraining.common.base import inputs
-from pretraining.configs.training import trainer_configs
-from pretraining.trainer import checkpoint_data as checkpoint_data_module
+from pretraining.configs import core
+from pretraining.configs.training import execution_configs
+from pretraining.configs.training import precision_configs
+from pretraining.trainer import checkpoint_data
 from pretraining.utils import logger as logger_utils
-from pretraining.utils import torch_utils
+from pretraining.utils.training import dist_utils
 from pretraining.utils.training import evaluation
 from pretraining.utils.training import loss as loss_utils
 from pretraining.utils.training import metrics
 from pretraining.utils.training import state
+from pretraining.utils.training.checkpointers import builder as checkpointer_builder
 
 
 class LLMTrainer:
@@ -46,7 +51,7 @@ class LLMTrainer:
         self,
         model: nn.Module,
         dist_model: typing.Union[nn.Module, parallel.DistributedDataParallel],
-        config: trainer_configs.TrainingLoopConfig,
+        config: core.TrainerConfig,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler.LRScheduler,
         loss_handler: loss_utils.LossHandler,
@@ -62,7 +67,7 @@ class LLMTrainer:
         Args:
             model: Base LLM model (for accessing methods/attributes)
             dist_model: Distributed model (DDP wrapped or single GPU model)
-            config: Training configuration
+            config: Full trainer configuration (model + training)
             optimizer: Configured optimizer
             scheduler: Configured learning rate scheduler
             loss_handler: Loss handler for computing losses
@@ -76,6 +81,7 @@ class LLMTrainer:
         self.model = model
         self.dist_model = dist_model
         self.config = config
+        self.training_config = config.training  # For easy access to training config
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.loss_handler = loss_handler
@@ -87,10 +93,13 @@ class LLMTrainer:
         self.world_size = world_size
         self.is_main_process = rank == 0
 
+        # Checkpoint tracking
+        self.checkpoints: typing.List[pathlib.Path] = []
+        self.last_checkpoint_step: typing.Optional[int] = None
+
         # Will be initialized in setup()
         self.logger = None
         self.state = None
-        self.scaler = None
         self.num_params = None
 
     def setup(self) -> None:
@@ -98,34 +107,32 @@ class LLMTrainer:
         self.logger = logger_utils.get_logger(__name__)
 
         self.state = state.TrainingState(
-            max_iterations=self.config.max_iters,
-            token_budget=self.config.token_budget,
-            eval_interval=self.config.evaluation.eval_interval,
-            checkpoint_interval=self.config.checkpoint.save_interval,
-            log_interval=self.config.log_interval,
+            max_iterations=self.training_config.max_iters,
+            token_budget=self.training_config.token_budget,
+            eval_interval=self.training_config.evaluation.eval_interval,
+            checkpoint_interval=self.training_config.checkpoint.save_interval,
+            log_interval=self.training_config.log_interval,
         )
-
-        self.scaler = torch.amp.GradScaler() if self.config.mixed_precision else None
 
         self.num_params = sum(p.numel() for p in self.model.parameters())
 
         # Initialize wandb if enabled
-        if self.config.wandb_logging.enabled and (
-            not self.config.wandb_logging.rank_zero_only or self.is_main_process
+        if self.training_config.wandb_logging.enabled and (
+            not self.training_config.wandb_logging.rank_zero_only or self.is_main_process
         ):
             # Create wandb directory
-            wandb_dir = pathlib.Path(self.config.checkpoint.checkpoint_dir) / "wandb"
+            wandb_dir = pathlib.Path(self.training_config.checkpoint.save_dir) / "wandb"
             wandb_dir.mkdir(parents=True, exist_ok=True)
 
             # Initialize wandb
             wandb.init(
                 dir=str(wandb_dir),
-                project=self.config.wandb_logging.project,
-                entity=self.config.wandb_logging.entity,
-                group=self.config.wandb_logging.group,
-                name=self.config.wandb_logging.name,
-                tags=self.config.wandb_logging.tags,
-                config=self.config.model_dump(),  # Convert config to dict
+                project=self.training_config.wandb_logging.project,
+                entity=self.training_config.wandb_logging.entity,
+                group=self.training_config.wandb_logging.group,
+                name=self.training_config.wandb_logging.name,
+                tags=self.training_config.wandb_logging.tags,
+                config=self.config.model_dump(),  # Convert full config to dict
             )
 
             # Log model info
@@ -141,7 +148,7 @@ class LLMTrainer:
             self.logger.info(f"Model has {self.num_params:,} parameters")
             if self.world_size > 1:
                 self.logger.info(f"Using distributed training with {self.world_size} processes")
-            if self.config.wandb_logging.enabled:
+            if self.training_config.wandb_logging.enabled:
                 self.logger.info("Weights & Biases logging enabled")
 
     def train_step(self, batch: typing.Dict[str, torch.Tensor]) -> typing.Dict[str, float]:
@@ -165,9 +172,35 @@ class LLMTrainer:
         )
 
         # Mixed precision context
-        autocast_context = torch.cuda.amp.autocast if self.config.mixed_precision else torch.no_grad
+        use_amp = self.training_config.precision in [
+            precision_configs.PrecisionType.AMP_BF16,
+            precision_configs.PrecisionType.AMP_FP16,
+        ]
 
-        with autocast_context(enabled=self.config.mixed_precision):
+        if use_amp:
+            autocast_dtype = (
+                torch.bfloat16
+                if self.training_config.precision == precision_configs.PrecisionType.AMP_BF16
+                else torch.float16
+            )
+            with torch.cuda.amp.autocast(enabled=True, dtype=autocast_dtype):
+                # Forward pass through distributed model
+                # The model will automatically use self.training to determine behavior
+                model_output = self.dist_model.forward(
+                    input_ids=training_inputs.input_ids,
+                    attention_mask=training_inputs.attention_mask,
+                )
+
+                # Compute losses from logits
+                losses = self.loss_handler.compute_losses(model_output, training_inputs)
+
+                # Aggregate losses
+                total_loss = self.loss_handler.aggregate_losses(losses)
+
+                # Scale for gradient accumulation
+                scaled_loss = total_loss / self.training_config.gradient_accumulation_steps
+        else:
+            # No autocast for fp32
             # Forward pass through distributed model
             # The model will automatically use self.training to determine behavior
             model_output = self.dist_model.forward(
@@ -182,13 +215,10 @@ class LLMTrainer:
             total_loss = self.loss_handler.aggregate_losses(losses)
 
             # Scale for gradient accumulation
-            scaled_loss = total_loss / self.config.gradient_accumulation_steps
+            scaled_loss = total_loss / self.training_config.gradient_accumulation_steps
 
         # Backward pass
-        if self.config.mixed_precision and self.scaler is not None:
-            self.scaler.scale(scaled_loss).backward()
-        else:
-            scaled_loss.backward()
+        scaled_loss.backward()
 
         # Collect step metrics
         step_metrics = metrics.collect_train_step_metrics(
@@ -235,25 +265,18 @@ class LLMTrainer:
         Returns:
             Dictionary with gradient norm
         """
-        # Unscale gradients if using AMP
-        if self.config.mixed_precision and self.scaler is not None:
-            self.scaler.unscale_(self.optimizer)
 
         # Compute gradient norm before clipping
         grad_norm = metrics.compute_gradient_norm(self.dist_model)
 
         # Clip gradients
-        if self.config.optimizer.grad_clip is not None:
+        if self.training_config.optimizer.grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(
-                self.dist_model.parameters(), self.config.optimizer.grad_clip
+                self.dist_model.parameters(), self.training_config.optimizer.grad_clip
             )
 
         # Optimizer step
-        if self.config.mixed_precision and self.scaler is not None:
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-        else:
-            self.optimizer.step()
+        self.optimizer.step()
 
         # Clear gradients
         self.optimizer.zero_grad(set_to_none=True)
@@ -287,7 +310,7 @@ class LLMTrainer:
             accumulated_metrics = {}
 
             # Accumulate gradients over multiple batches
-            for micro_batch_idx in range(self.config.gradient_accumulation_steps):
+            for micro_batch_idx in range(self.training_config.gradient_accumulation_steps):
                 try:
                     batch = next(train_iter)
                 except StopIteration:
@@ -305,23 +328,25 @@ class LLMTrainer:
 
             # Average accumulated metrics
             for key in accumulated_metrics:
-                accumulated_metrics[key] /= self.config.gradient_accumulation_steps
+                accumulated_metrics[key] /= self.training_config.gradient_accumulation_steps
 
             # Optimizer step
             optim_metrics = self.optimizer_step()
 
             # Update state
-            batch_size = batch["input_ids"].shape[0] * self.config.gradient_accumulation_steps
+            batch_size = (
+                batch["input_ids"].shape[0] * self.training_config.gradient_accumulation_steps
+            )
             seq_length = batch["input_ids"].shape[1]
             self.state.update(batch_size, seq_length)
 
             # Compute throughput metrics
             iter_time = time.time() - iter_start_time
             tokens_processed = batch_size * seq_length
-            tokens_per_sec = tokens_processed / iter_time
+            # tokens_per_sec = tokens_processed / iter_time
 
             # Get GPU memory usage
-            peak_memory_mb = torch_utils.peak_gpu_memory(reset=False)
+            # peak_memory_mb = torch_utils.peak_gpu_memory(reset=False)
 
             # Collect all metrics for this step
             if self.state.should_log():
@@ -361,10 +386,10 @@ class LLMTrainer:
                     self.logger.info(log_message)
 
                 # Log to W&B if enabled
-                if self.config.wandb_logging.enabled and (
-                    not self.config.wandb_logging.rank_zero_only or self.is_main_process
+                if self.training_config.wandb_logging.enabled and (
+                    not self.training_config.wandb_logging.rank_zero_only or self.is_main_process
                 ):
-                    if self.state.iteration % self.config.wandb_logging.log_interval == 0:
+                    if self.state.iteration % self.training_config.wandb_logging.log_interval == 0:
                         wandb.log(all_metrics, step=self.state.iteration)
 
             # Evaluation
@@ -390,49 +415,75 @@ class LLMTrainer:
                     self.state.best_val_loss = val_loss
 
                 # Log eval metrics to W&B
-                if self.config.wandb_logging.enabled and (
-                    not self.config.wandb_logging.rank_zero_only or self.is_main_process
+                if self.training_config.wandb_logging.enabled and (
+                    not self.training_config.wandb_logging.rank_zero_only or self.is_main_process
                 ):
                     wandb.log(eval_metrics, step=self.state.iteration)
 
+            # Checkpoint saving
+            if self.state.should_checkpoint():
+                if self.is_main_process:
+                    self.logger.info(f"Saving checkpoint at step {self.state.iteration}...")
+
+                checkpoint_path = self.save_checkpoint()
+
+                if self.is_main_process:
+                    self.logger.info(f"Checkpoint saved to {checkpoint_path}")
+
             # Synchronize across processes
-            torch_utils.barrier()
+            dist_utils.barrier()
 
         if self.is_main_process:
             self.logger.info(f"Training complete after {self.state.iteration} steps")
 
-    def get_checkpoint_data(self) -> checkpoint_data_module.CheckpointData:
+    def get_checkpoint_data(self) -> checkpoint_data.CheckpointData:
         """Get all data needed for checkpointing.
 
         Returns:
             CheckpointData object with all trainer state
         """
-        return checkpoint_data_module.CheckpointData(
-            model_state_dict=self.model.state_dict(),
-            optimizer_state_dict=self.optimizer.state_dict(),
-            scheduler_state_dict=self.scheduler.state_dict(),
-            scaler_state_dict=self.scaler.state_dict() if self.scaler else None,
-            training_state_dict=self.state.get_checkpoint_dict(),
-            config=self.config,
-            model_args={},  # Could be populated if needed for model recreation
+        # For FSDP, we need to use dist_model to get the proper sharded state
+        # For DDP/Single, we can use either model or dist_model (they're equivalent)
+        # We'll use dist_model for consistency since it works for all cases
+
+        # Check if dist_model is FSDP-wrapped
+        is_fsdp = isinstance(self.dist_model, fsdp.FullyShardedDataParallel)
+
+        # Use dist_model for FSDP to get sharded state, model for others
+        # Note: For FSDP checkpointers, these state dicts are often ignored
+        # and re-extracted within proper FSDP contexts, but we provide them
+        # for compatibility with non-FSDP checkpointers
+        model_state = self.dist_model.state_dict() if is_fsdp else self.model.state_dict()
+
+        return checkpoint_data.CheckpointData(
+            model_state=model_state,
+            optimizer_state=self.optimizer.state_dict(),
+            scheduler_state=self.scheduler.state_dict(),
+            training_state=self.state.get_checkpoint_dict(),
         )
 
-    def load_checkpoint_data(self, checkpoint_data: checkpoint_data_module.CheckpointData) -> None:
+    def load_checkpoint_data(self, ckpt_data: checkpoint_data.CheckpointData) -> None:
         """Load state from checkpoint data.
 
         Args:
-            checkpoint_data: CheckpointData object to load from
+            ckpt_data: CheckpointData object to load from
         """
-        # Load model and optimizer states
-        self.model.load_state_dict(checkpoint_data.model_state_dict)
-        self.optimizer.load_state_dict(checkpoint_data.optimizer_state_dict)
-        self.scheduler.load_state_dict(checkpoint_data.scheduler_state_dict)
+        # Check if dist_model is FSDP-wrapped
+        is_fsdp = isinstance(self.dist_model, fsdp.FullyShardedDataParallel)
 
-        if self.scaler and checkpoint_data.scaler_state_dict:
-            self.scaler.load_state_dict(checkpoint_data.scaler_state_dict)
+        # Load model state
+        # For FSDP, the checkpointer handles loading within FSDP context
+        # This is mainly for non-FSDP cases
+        if not is_fsdp:
+            self.model.load_state_dict(ckpt_data.model_state)
+            self.optimizer.load_state_dict(ckpt_data.optimizer_state)
+        # For FSDP, the checkpointer already loaded states in its load_checkpoint method
+
+        # Scheduler state can be loaded for all cases
+        self.scheduler.load_state_dict(ckpt_data.scheduler_state)
 
         # Load training state
-        self.state.load_checkpoint_dict(checkpoint_data.training_state_dict)
+        self.state.load_checkpoint_dict(ckpt_data.training_state)
 
         if self.is_main_process:
             self.logger.info(f"Loaded checkpoint at step {self.state.iteration}")
@@ -440,10 +491,120 @@ class LLMTrainer:
     def cleanup(self) -> None:
         """Clean up resources after training."""
         # Finish wandb run if it was initialized
-        if self.config.wandb_logging.enabled and (
-            not self.config.wandb_logging.rank_zero_only or self.is_main_process
+        if self.training_config.wandb_logging.enabled and (
+            not self.training_config.wandb_logging.rank_zero_only or self.is_main_process
         ):
             wandb.finish()
 
         if self.is_main_process:
             self.logger.info("Trainer cleanup complete")
+
+    def save_checkpoint(self) -> pathlib.Path:
+        """Save a training checkpoint.
+
+        Creates checkpointer on-demand and saves checkpoint.
+        All ranks participate but with different roles based on strategy.
+
+        Returns:
+            Path to saved checkpoint directory
+        """
+        # Zero gradients to avoid saving them
+        self.optimizer.zero_grad(set_to_none=True)
+
+        # Build checkpointer based on execution strategy
+        checkpointer = checkpointer_builder.build_checkpointer(
+            config=self.training_config.checkpoint,
+            execution=self.training_config.execution,
+            dist_model=self.dist_model
+            if self.training_config.execution.strategy == execution_configs.ExecutionStrategy.FSDP
+            else None,
+            optimizer=self.optimizer
+            if self.training_config.execution.strategy == execution_configs.ExecutionStrategy.FSDP
+            else None,
+        )
+
+        # Get checkpoint data
+        ckpt_data = self.get_checkpoint_data()
+
+        # Save checkpoint (all ranks participate for FSDP, rank 0 only for others)
+        if (
+            self.training_config.execution.strategy == execution_configs.ExecutionStrategy.FSDP
+            or self.is_main_process
+        ):
+            checkpointer.save_checkpoint(ckpt_data, self.config)
+
+        # Sync across ranks
+        dist_utils.barrier()
+
+        # Track checkpoint (main process only)
+        checkpoint_dir = (
+            pathlib.Path(self.training_config.checkpoint.save_dir) / f"step{self.state.iteration}"
+        )
+        if self.is_main_process:
+            self.checkpoints.append(checkpoint_dir)
+            self.last_checkpoint_step = self.state.iteration
+
+            # Rotate old checkpoints
+            self._rotate_checkpoints()
+
+        return checkpoint_dir
+
+    def _rotate_checkpoints(self) -> None:
+        """Remove old checkpoints to keep only the last N."""
+        keep_last_n = self.training_config.checkpoint.keep_last_n
+        if keep_last_n <= 0:
+            return  # Keep all checkpoints
+
+        while len(self.checkpoints) > keep_last_n:
+            old_checkpoint = self.checkpoints.pop(0)
+
+            # Sync before removal
+            dist_utils.barrier()
+
+            if old_checkpoint.exists() and self.is_main_process:
+                self.logger.info(f"Removing old checkpoint: {old_checkpoint}")
+                shutil.rmtree(old_checkpoint)
+
+            # Sync after removal
+            dist_utils.barrier()
+
+    def load_checkpoint(self, checkpoint_path: typing.Optional[pathlib.Path] = None) -> bool:
+        """Load a checkpoint for resuming training.
+
+        Args:
+            checkpoint_path: Specific checkpoint to load, or None to find latest
+
+        Returns:
+            True if checkpoint was loaded, False otherwise
+        """
+        # Build checkpointer
+        checkpointer = checkpointer_builder.build_checkpointer(
+            config=self.training_config.checkpoint,
+            execution=self.training_config.execution,
+            dist_model=self.dist_model
+            if self.training_config.execution.strategy == execution_configs.ExecutionStrategy.FSDP
+            else None,
+            optimizer=self.optimizer
+            if self.training_config.execution.strategy == execution_configs.ExecutionStrategy.FSDP
+            else None,
+        )
+
+        # Override resume_from if specific path provided
+        if checkpoint_path:
+            checkpointer.config.resume_from = str(checkpoint_path)
+
+        # Load checkpoint (all ranks for FSDP, rank 0 for others)
+        ckpt_data = None
+        if self.training_config.execution.strategy == execution_configs.ExecutionStrategy.FSDP:
+            ckpt_data = checkpointer.load_checkpoint(str(self.device))
+        elif self.is_main_process:
+            ckpt_data = checkpointer.load_checkpoint(str(self.device))
+
+        # Sync across ranks
+        dist_utils.barrier()
+
+        if ckpt_data is not None:
+            self.load_checkpoint_data(ckpt_data)
+            return True
+
+        return False

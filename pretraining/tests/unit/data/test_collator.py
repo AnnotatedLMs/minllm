@@ -8,6 +8,7 @@ Critical for ensuring model receives correctly formatted inputs.
 # Third Party
 import pytest
 import torch
+from torch import testing
 
 # Project
 from pretraining.data import collator
@@ -41,7 +42,7 @@ class TestDataCollator:
         assert result["labels"].shape == (3, 5)
 
         # Labels should be a clone of input_ids
-        torch.testing.assert_close(result["input_ids"], result["labels"])
+        testing.assert_close(result["input_ids"], result["labels"])
 
     def test_extract_input_ids(self, basic_collator: collator.DataCollator) -> None:
         """Test extracting input_ids from batch."""
@@ -73,7 +74,7 @@ class TestDataCollator:
                 [7, 8, 9],
             ]
         )
-        torch.testing.assert_close(stacked, expected)
+        testing.assert_close(stacked, expected)
 
     def test_create_labels(self, basic_collator: collator.DataCollator) -> None:
         """Test label creation (should be a clone)."""
@@ -82,7 +83,7 @@ class TestDataCollator:
         labels = basic_collator._create_labels(input_ids)
 
         # Should be a clone, not the same tensor
-        torch.testing.assert_close(labels, input_ids)
+        testing.assert_close(labels, input_ids)
         assert labels is not input_ids  # Different tensor objects
 
 
@@ -125,15 +126,15 @@ class TestMTPDataCollator:
         # Check targets for each depth
         # Depth 0: predict 1 token ahead
         expected_depth_0 = torch.tensor([2, 3, 4, 5, -100])
-        torch.testing.assert_close(mtp_targets[0, 0], expected_depth_0)
+        testing.assert_close(mtp_targets[0, 0], expected_depth_0)
 
         # Depth 1: predict 2 tokens ahead
         expected_depth_1 = torch.tensor([3, 4, 5, -100, -100])
-        torch.testing.assert_close(mtp_targets[0, 1], expected_depth_1)
+        testing.assert_close(mtp_targets[0, 1], expected_depth_1)
 
         # Depth 2: predict 3 tokens ahead
         expected_depth_2 = torch.tensor([4, 5, -100, -100, -100])
-        torch.testing.assert_close(mtp_targets[0, 2], expected_depth_2)
+        testing.assert_close(mtp_targets[0, 2], expected_depth_2)
 
     def test_mtp_targets_ignore_index(self, mtp_collator: collator.MTPDataCollator) -> None:
         """Test that MTP targets use -100 for positions without valid targets."""

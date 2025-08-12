@@ -4,8 +4,6 @@ import pydantic
 # Project
 from pretraining.configs import base
 
-# TODO: adjust based on dataset/ dataloader requirements
-
 
 class DataConfig(base.BaseConfig):
     """Configuration for data loading."""

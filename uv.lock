@@ -455,7 +455,6 @@ dependencies = [
     { name = "einops" },
     { name = "jaxtyping" },
     { name = "peft" },
-    { name = "pytest" },
     { name = "tiktoken" },
     { name = "torch", version = "2.7.1", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.7.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin' and sys_platform != 'linux'" },
@@ -466,6 +465,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pytest" },
     { name = "ruff" },
 ]
 
@@ -476,7 +476,6 @@ requires-dist = [
     { name = "einops", specifier = ">=0.8.1" },
     { name = "jaxtyping", specifier = ">=0.3.2" },
     { name = "peft", specifier = ">=0.17.0" },
-    { name = "pytest", specifier = ">=8.4.1" },
     { name = "tiktoken", specifier = ">=0.9.0" },
     { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.7.1", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.7.1", index = "https://download.pytorch.org/whl/cu128" },
@@ -485,7 +484,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "ruff", specifier = ">=0.9.4" }]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "ruff", specifier = ">=0.9.4" },
+]
 
 [[package]]
 name = "mpmath"

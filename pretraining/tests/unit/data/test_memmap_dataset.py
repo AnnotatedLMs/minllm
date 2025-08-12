@@ -6,13 +6,14 @@ Critical for ensuring training data is correctly loaded and chunked.
 """
 
 # Standard Library
+import pathlib
 import tempfile
-from pathlib import Path
 
 # Third Party
 import numpy as np
 import pytest
 import torch
+from torch import testing
 
 # Project
 from pretraining.data import memmap_dataset
@@ -22,7 +23,7 @@ class TestMemMapDataset:
     """Test memory-mapped dataset functionality."""
 
     @pytest.fixture
-    def sample_data_file(self) -> Path:
+    def sample_data_file(self) -> pathlib.Path:
         """Create a temporary data file with known content."""
         # Create sample token data
         num_tokens = 1000
@@ -31,9 +32,9 @@ class TestMemMapDataset:
         # Write to temporary file
         with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
             tokens.tofile(f)
-            return Path(f.name)
+            return pathlib.Path(f.name)
 
-    def test_dataset_initialization(self, sample_data_file: Path) -> None:
+    def test_dataset_initialization(self, sample_data_file: pathlib.Path) -> None:
         """Test dataset initializes correctly."""
         chunk_size = 128
         dataset = memmap_dataset.MemMapDataset(
@@ -49,7 +50,7 @@ class TestMemMapDataset:
         # Clean up
         sample_data_file.unlink()
 
-    def test_chunk_boundaries(self, sample_data_file: Path) -> None:
+    def test_chunk_boundaries(self, sample_data_file: pathlib.Path) -> None:
         """Test that chunks respect sequence boundaries."""
         chunk_size = 128
         dataset = memmap_dataset.MemMapDataset(
@@ -77,7 +78,7 @@ class TestMemMapDataset:
         # Clean up
         sample_data_file.unlink()
 
-    def test_last_chunk_handling(self, sample_data_file: Path) -> None:
+    def test_last_chunk_handling(self, sample_data_file: pathlib.Path) -> None:
         """Test handling of incomplete last chunk."""
         chunk_size = 128
         dataset = memmap_dataset.MemMapDataset(
@@ -98,7 +99,7 @@ class TestMemMapDataset:
         # Clean up
         sample_data_file.unlink()
 
-    def test_out_of_bounds_access(self, sample_data_file: Path) -> None:
+    def test_out_of_bounds_access(self, sample_data_file: pathlib.Path) -> None:
         """Test that out-of-bounds access raises appropriate error."""
         chunk_size = 128
         dataset = memmap_dataset.MemMapDataset(
@@ -116,36 +117,14 @@ class TestMemMapDataset:
         # Clean up
         sample_data_file.unlink()
 
-    def test_chunk_overlap_for_context(self, sample_data_file: Path) -> None:
-        """Test overlapping chunks for maintaining context (if implemented)."""
-        chunk_size = 128
-        overlap = 16  # If dataset supports overlap
-
-        # This test assumes overlap functionality might be added
-        # Currently most implementations don't overlap, but it's good practice
-        dataset = memmap_dataset.MemMapDataset(
-            sample_data_file,
-            chunk_size=chunk_size,
-        )
-
-        # For now, just verify no unintended overlap
-        chunk1 = dataset[0]
-        chunk2 = dataset[1]
-
-        # Chunks should be continuous without gaps
-        assert chunk1["input_ids"][-1] + 1 == chunk2["input_ids"][0]
-
-        # Clean up
-        sample_data_file.unlink()
-
     def test_empty_file_handling(self) -> None:
         """Test that empty data file raises ValueError."""
         with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
-            empty_file = Path(f.name)
+            empty_file = pathlib.Path(f.name)
 
         # Should raise ValueError for empty file
         with pytest.raises(ValueError, match="has 0 tokens"):
-            dataset = memmap_dataset.MemMapDataset(
+            _ = memmap_dataset.MemMapDataset(
                 empty_file,
                 chunk_size=128,
             )
@@ -153,7 +132,7 @@ class TestMemMapDataset:
         # Clean up
         empty_file.unlink()
 
-    def test_chunk_type_conversion(self, sample_data_file: Path) -> None:
+    def test_chunk_type_conversion(self, sample_data_file: pathlib.Path) -> None:
         """Test that chunks are properly converted to tensors."""
         chunk_size = 128
         dataset = memmap_dataset.MemMapDataset(
@@ -171,7 +150,7 @@ class TestMemMapDataset:
         # Clean up
         sample_data_file.unlink()
 
-    def test_reproducible_access(self, sample_data_file: Path) -> None:
+    def test_reproducible_access(self, sample_data_file: pathlib.Path) -> None:
         """Test that repeated access returns same data."""
         chunk_size = 128
         dataset = memmap_dataset.MemMapDataset(
@@ -184,18 +163,18 @@ class TestMemMapDataset:
         chunk2 = dataset[3]
 
         # Should be identical
-        torch.testing.assert_close(chunk1["input_ids"], chunk2["input_ids"])
+        testing.assert_close(chunk1["input_ids"], chunk2["input_ids"])
 
         # Clean up
         sample_data_file.unlink()
 
-    def test_large_chunk_size(self, sample_data_file: Path) -> None:
+    def test_large_chunk_size(self, sample_data_file: pathlib.Path) -> None:
         """Test behavior with chunk size larger than file."""
         chunk_size = 2000  # Larger than 1000 tokens in file
 
         # Should raise ValueError for chunk size larger than file
         with pytest.raises(ValueError, match="has 1000 tokens"):
-            dataset = memmap_dataset.MemMapDataset(
+            _ = memmap_dataset.MemMapDataset(
                 sample_data_file,
                 chunk_size=chunk_size,
             )

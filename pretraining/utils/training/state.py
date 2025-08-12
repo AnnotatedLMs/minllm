@@ -1,23 +1,21 @@
 # Standard Library
+import random
 import time
 import typing
 
 # Third Party
+import numpy as np
 import pydantic
 import torch
 
-# Project
-from pretraining.configs import base
 
-
-class TrainingState(base.BaseConfig):
+class TrainingState(pydantic.BaseModel):
     """Manages training progress and state.
 
     Tracks iterations, tokens, and timing for LLM pretraining.
     Provides methods to determine when to evaluate, checkpoint, or stop.
     """
 
-    # Override the base config to allow arbitrary types (needed for torch tensors in RNG state)
     model_config = pydantic.ConfigDict(
         extra="forbid",
         validate_assignment=True,
@@ -44,6 +42,9 @@ class TrainingState(base.BaseConfig):
 
     # Best metrics tracking
     best_val_loss: float = float("inf")
+
+    # Checkpoint history (paths to saved checkpoints)
+    checkpoint_history: typing.List[str] = pydantic.Field(default_factory=list)
 
     def update(self, batch_size: int, seq_length: int) -> None:
         """Update state after training step.
@@ -109,8 +110,8 @@ class TrainingState(base.BaseConfig):
         - iteration/tokens_seen: Know where training stopped
         - epoch: Current pass through dataset
         - best_val_loss: For model selection
-        - torch RNG: Controls CPU operations (dropout, init)
-        - cuda RNG: Controls GPU operations (if using GPU)
+        - checkpoint_history: List of previously saved checkpoints
+        - RNG states: Python, NumPy, PyTorch CPU & CUDA states
 
         Returns:
             Dictionary with all state to save
@@ -120,7 +121,10 @@ class TrainingState(base.BaseConfig):
             "tokens_seen": self.tokens_seen,
             "epoch": self.epoch,
             "best_val_loss": self.best_val_loss,
+            "checkpoint_history": self.checkpoint_history,
             "rng_state": {
+                "python": random.getstate(),
+                "numpy": np.random.get_state(),
                 "torch": torch.get_rng_state(),
                 "cuda": torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
             },
@@ -136,12 +140,18 @@ class TrainingState(base.BaseConfig):
         self.tokens_seen = state_dict["tokens_seen"]
         self.epoch = state_dict.get("epoch", 0)
         self.best_val_loss = state_dict.get("best_val_loss", float("inf"))
+        self.checkpoint_history = state_dict.get("checkpoint_history", [])
 
         # Restore RNG states
         if "rng_state" in state_dict:
-            torch.set_rng_state(state_dict["rng_state"]["torch"])
-            if torch.cuda.is_available() and state_dict["rng_state"]["cuda"] is not None:
-                torch.cuda.set_rng_state(state_dict["rng_state"]["cuda"])
+            rng = state_dict["rng_state"]
+            if "python" in rng:
+                random.setstate(rng["python"])
+            if "numpy" in rng:
+                np.random.set_state(rng["numpy"])
+            torch.set_rng_state(rng["torch"])
+            if torch.cuda.is_available() and rng.get("cuda") is not None:
+                torch.cuda.set_rng_state(rng["cuda"])
 
         # Reset timing
         self.start_time = time.time()

@@ -7,7 +7,7 @@ Tests RoPE, PartialRoPE, and LearnedPositionEmbedding implementations.
 # Third Party
 import pytest
 import torch
-import torch.testing
+from torch import testing
 
 # Project
 from pretraining.common.patterns.position import core
@@ -71,8 +71,8 @@ class TestRoPE:
         out_full = rope_module(x_full, position_offset=0)
 
         # Outputs should match when processed separately vs together
-        torch.testing.assert_close(out1, out_full[:, :1])
-        torch.testing.assert_close(out2, out_full[:, 1:2])
+        testing.assert_close(out1, out_full[:, :1])
+        testing.assert_close(out2, out_full[:, 1:2])
 
     def test_rope_max_position_exceeded(self, rope_module: core.PrecomputedRoPE) -> None:
         """Test error when position exceeds precomputed max."""
@@ -89,7 +89,7 @@ class TestRoPE:
         out1 = rope_module(x, position_offset=0)
         out2 = rope_module(x, position_offset=0)
 
-        torch.testing.assert_close(out1, out2)
+        testing.assert_close(out1, out2)
 
 
 class TestPartialRoPE:

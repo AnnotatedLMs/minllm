@@ -9,7 +9,7 @@ import torch
 
 # Project
 from pretraining.configs import base
-from pretraining.utils.training import distributed
+from pretraining.utils.training import dist_utils
 
 
 class ExecutionStrategy(enum.Enum):
@@ -94,6 +94,37 @@ class FSDPWrapStrategy(enum.Enum):
     """Wrap every fifth layer."""
 
 
+class ActivationCheckpointingStrategy(enum.Enum):
+    """Activation checkpointing strategies for memory optimization."""
+
+    NONE = "none"
+    """No activation checkpointing."""
+
+    WHOLE_LAYER = "whole_layer"
+    """Checkpoint every transformer layer."""
+
+    ONE_IN_TWO = "one_in_two"
+    """Checkpoint one in two transformer layers."""
+
+    ONE_IN_THREE = "one_in_three"
+    """Checkpoint one in three transformer layers."""
+
+    ONE_IN_FOUR = "one_in_four"
+    """Checkpoint one in four transformer layers."""
+
+    ONE_IN_EIGHT = "one_in_eight"
+    """Checkpoint one in eight transformer layers."""
+
+    TWO_IN_THREE = "two_in_three"
+    """Checkpoint two out of every three transformer layers."""
+
+    THREE_IN_FOUR = "three_in_four"
+    """Checkpoint three out of four transformer layers."""
+
+    FINE_GRAINED = "fine_grained"
+    """Focus checkpointing on where it is cheap to recompute and saves most memory."""
+
+
 class FSDPPrecision(enum.Enum):
     """FSDP mixed precision modes."""
 
@@ -114,7 +145,7 @@ class BaseDeviceConfig(base.BaseConfig, abc.ABC):
 
     def _setup_cuda_device(self) -> torch.device:
         """Common CUDA device setup logic."""
-        local_rank = distributed.get_local_rank()
+        local_rank = dist_utils.get_local_rank()
         torch.cuda.set_device(f"cuda:{local_rank}")
         torch.cuda.empty_cache()
         return torch.device("cuda")
@@ -155,8 +186,6 @@ class DDPConfig(BaseDeviceConfig):
 
     find_unused_params: bool = False
     """
-    (from torch documentation)
-
     This mode allows running backward on a subgraph of the model, and DDP finds out which parameters
     are involved in the backward pass by traversing the autograd graph from the model output and marking
     all unused parameters as ready for reduction. Note that traversing the autograd graph introduces extra overheads,
@@ -226,17 +255,49 @@ class FSDPConfig(BaseDeviceConfig):
     min_params_size: int = int(1e8)
     """Minimum parameter size for SIZE_BASED wrapping strategy."""
 
+    # Block grouping for wrapping strategies
+    block_group_size: int = pydantic.Field(default=1, ge=1)
+    """Number of transformer blocks to group together for FSDP wrapping."""
+
+    # Activation checkpointing
+    activation_checkpointing: typing.Optional[ActivationCheckpointingStrategy] = None
+    """Strategy for activation checkpointing to save memory."""
+
+    activation_checkpointing_reentrant: bool = False
+    """Whether to use reentrant activation checkpointing (slower but more compatible)."""
+
+    # Synchronization
+    sync_module_states: bool = True
+    """Whether to synchronize module buffers across ranks during initialization."""
+
+    # State dict configuration for checkpointing
+    state_dict_type: typing.Literal["full", "local", "sharded"] = "full"
+    """Type of state dict to use for checkpointing."""
+
+    state_dict_rank0_only: bool = True
+    """Whether only rank 0 should save unsharded checkpoints."""
+
+    # Advanced options
+    ignored_modules: typing.Optional[typing.List[str]] = None
+    """List of module names to ignore when wrapping with FSDP."""
+
+    backward_prefetch_policy: typing.Literal["backward_pre", "backward_post", "none"] = (
+        "backward_pre"
+    )
+    """When to prefetch next layer's parameters during backward pass."""
+
     @pydantic.model_validator(mode="after")
-    def validate_hybrid_sharding(self):
-        """Validate hybrid sharding configuration."""
-        if self.sharding_strategy in [
-            FSDPShardingStrategy.HYBRID_SHARD,
-            FSDPShardingStrategy._HYBRID_SHARD_ZERO2,
+    def validate_block_group_wrapping(self):
+        """Validate block group wrapping configuration."""
+        if self.wrapping_strategy in [
+            FSDPWrapStrategy.BY_BLOCK_GROUP,
+            FSDPWrapStrategy.BY_BLOCK_GROUP_AND_SIZE,
         ]:
-            if self.hybrid_sharding_num_model_replicas is not None:
-                # Will validate against world size at runtime
-                if self.hybrid_sharding_num_model_replicas <= 0:
-                    raise ValueError("hybrid_sharding_num_model_replicas must be positive")
+            if self.block_group_size <= 1:
+                raise ValueError(
+                    f"'{self.wrapping_strategy.value}' wrapping strategy requires "
+                    f"block_group_size > 1, got {self.block_group_size}"
+                )
         return self
 
     def setup_device(self) -> torch.device:

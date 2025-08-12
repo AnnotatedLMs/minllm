@@ -15,12 +15,19 @@ class MemMapDataset(torch.utils.data.Dataset):
     Provides efficient random access to pre-tokenized data stored as numpy arrays.
     Each item is a chunk of contiguous tokens of size `chunk_size`.
 
+    Supports both raw binary files and FineWeb/nanoGPT format with headers.
+
     Args:
         paths: Paths to memory-mapped token arrays (.bin files)
         chunk_size: Number of tokens per instance (typically max_sequence_length)
         dtype: Numpy datatype of the arrays (default: np.uint16)
         metadata: Optional metadata to attach to each file
     """
+
+    # FineWeb/nanoGPT header constants
+    HEADER_MAGIC = 20240520
+    HEADER_VERSION = 1
+    HEADER_SIZE = 1024  # 256 int32 values
 
     def __init__(
         self,
@@ -53,10 +60,13 @@ class MemMapDataset(torch.utils.data.Dataset):
         """Calculate chunk offsets for each file."""
         self._offsets: typing.List[typing.Tuple[int, int]] = []
         self._file_lengths: typing.List[int] = []
+        self._file_headers: typing.Dict[int, typing.Optional[typing.Dict]] = {}
         self._total_chunks = 0
 
-        for path in self.paths:
-            num_chunks = self._get_num_chunks_in_file(path)
+        for idx, path in enumerate(self.paths):
+            header_info = self._check_header(path)
+            self._file_headers[idx] = header_info
+            num_chunks = self._get_num_chunks_in_file(path, header_info)
             self._validate_file_size(path, num_chunks)
 
             start_offset = self._total_chunks
@@ -66,10 +76,33 @@ class MemMapDataset(torch.utils.data.Dataset):
             self._file_lengths.append(num_chunks)
             self._total_chunks += num_chunks
 
-    def _get_num_chunks_in_file(self, path: pathlib.Path) -> int:
+    def _check_header(self, path: pathlib.Path) -> typing.Optional[typing.Dict]:
+        """Check if file has a FineWeb/nanoGPT header and return info if present."""
+        with open(path, "rb") as f:
+            try:
+                header = np.fromfile(f, dtype=np.int32, count=3)  # Only need first 3 values
+                if len(header) == 3 and header[0] == self.HEADER_MAGIC:
+                    if header[1] != self.HEADER_VERSION:
+                        raise ValueError(f"Unsupported header version {header[1]} in {path}")
+                    return {
+                        "has_header": True,
+                        "num_tokens": int(header[2]),
+                        "offset": self.HEADER_SIZE,
+                    }
+            except (IOError, OSError, ValueError):
+                # File doesn't have a valid header or can't be read as expected
+                pass
+        return None
+
+    def _get_num_chunks_in_file(
+        self, path: pathlib.Path, header_info: typing.Optional[typing.Dict]
+    ) -> int:
         """Calculate number of complete chunks in a file."""
-        file_size = os.path.getsize(path)
-        num_tokens = file_size // self.dtype(0).itemsize
+        if header_info:
+            num_tokens = header_info["num_tokens"]
+        else:
+            file_size = os.path.getsize(path)
+            num_tokens = file_size // self.dtype(0).itemsize
         return num_tokens // self.chunk_size
 
     def _validate_file_size(self, path: pathlib.Path, num_chunks: int) -> None:
@@ -132,7 +165,16 @@ class MemMapDataset(torch.utils.data.Dataset):
 
     def _create_memmap(self, path: pathlib.Path) -> np.memmap:
         """Create memory-mapped array for efficient access."""
-        return np.memmap(path, dtype=self.dtype, mode="r")
+        # Get file index to check for header
+        file_idx = self.paths.index(path)
+        header_info = self._file_headers.get(file_idx)
+
+        if header_info and header_info.get("has_header"):
+            # For files with headers, use offset to skip header
+            return np.memmap(path, dtype=self.dtype, mode="r", offset=header_info["offset"])
+        else:
+            # For raw files, no offset needed
+            return np.memmap(path, dtype=self.dtype, mode="r")
 
     def _extract_tokens(self, memmap: np.memmap, local_idx: int) -> np.ndarray:
         """Extract chunk of tokens at given local index."""

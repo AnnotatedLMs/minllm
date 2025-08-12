@@ -15,6 +15,7 @@ from pretraining.configs.model.components import heads
 class BaseLLMConfig(base.BaseConfig):
     """Base configuration shared by many LLM architectures."""
 
+    vocab_size: int = pydantic.Field(gt=0, description="Size of the token vocabulary")
     token_embedding: embeddings.TokenEmbeddingConfig
     transformer: transformer.TransformerConfig
     output_head: heads.OutputHeadConfig
@@ -28,13 +29,6 @@ class BaseLLMConfig(base.BaseConfig):
             raise ValueError(
                 f"token embedding_dim ({self.token_embedding.embedding_dim}) must match "
                 f"transformer hidden_dim ({self.transformer.hidden_dim})"
-            )
-
-        # Ensure vocab sizes match
-        if self.token_embedding.vocab_size != self.transformer.vocab_size:
-            raise ValueError(
-                f"token embedding vocab_size ({self.token_embedding.vocab_size}) must match "
-                f"transformer vocab_size ({self.transformer.vocab_size})"
             )
 
         return self

@@ -7,6 +7,7 @@ import pathlib
 import pytest
 
 # Project
+from pretraining.configs import core
 from pretraining.configs import loader
 from pretraining.configs.model import initialization
 from pretraining.configs.model import transformer
@@ -31,7 +32,7 @@ class TestConfigParsing:
 
     def test_parse_gpt2_config(self, example_configs_dir):
         """Test parsing GPT-2 configuration."""
-        config_path = example_configs_dir / "gpt2_debug.yaml"
+        config_path = example_configs_dir / "gpt2" / "gpt2_debug_cpu.yaml"
         config = loader.load_training_config(config_path, gpt.GPT2Config)
 
         # Check it parsed to correct type
@@ -40,7 +41,7 @@ class TestConfigParsing:
         # Check model dimensions
         assert config.llm.transformer.hidden_dim == 64
         assert config.llm.transformer.n_layers == 2
-        assert config.llm.transformer.vocab_size == 1000
+        assert config.llm.vocab_size == 50257  # GPT-2 vocab for FineWeb
 
         # Check weight init
         assert isinstance(config.llm.weight_init, initialization.GPT2InitConfig)
@@ -58,7 +59,7 @@ class TestConfigParsing:
 
     def test_parse_llama_config(self, example_configs_dir):
         """Test parsing Llama 3.1 configuration."""
-        config_path = example_configs_dir / "llama31_debug.yaml"
+        config_path = example_configs_dir / "llama3" / "llama3_debug_cpu.yaml"
         config = loader.load_training_config(config_path, llama.Llama3Config)
 
         # Check it parsed to correct type
@@ -67,7 +68,7 @@ class TestConfigParsing:
         # Check model dimensions
         assert config.llm.transformer.hidden_dim == 64
         assert config.llm.transformer.n_layers == 2
-        assert config.llm.transformer.vocab_size == 1000
+        assert config.llm.vocab_size == 1000
 
         # Check weight init (Llama uses default, so None)
         assert config.llm.weight_init is None
@@ -86,7 +87,7 @@ class TestConfigParsing:
 
     def test_parse_deepseek_config(self, example_configs_dir):
         """Test parsing DeepSeek3 configuration."""
-        config_path = example_configs_dir / "deepseek3_debug.yaml"
+        config_path = example_configs_dir / "deepseek3" / "deepseek3_debug_cpu.yaml"
         config = loader.load_training_config(config_path, deepseek.DeepSeek3Config)
 
         # Check it parsed to correct type
@@ -120,9 +121,9 @@ class TestConfigParsing:
         """Test that configs are properly validated."""
         # All debug configs should load without errors
         configs = [
-            ("gpt2_debug.yaml", gpt.GPT2Config),
-            ("llama31_debug.yaml", llama.Llama3Config),
-            ("deepseek3_debug.yaml", deepseek.DeepSeek3Config),
+            ("gpt2/gpt2_debug_cpu.yaml", gpt.GPT2Config),
+            ("llama3/llama3_debug_cpu.yaml", llama.Llama3Config),
+            ("deepseek3/deepseek3_debug_cpu.yaml", deepseek.DeepSeek3Config),
         ]
 
         for yaml_file, config_class in configs:
@@ -132,23 +133,20 @@ class TestConfigParsing:
             # Verify key constraints are met
             assert config.llm.transformer.n_layers > 0
             assert config.llm.transformer.hidden_dim > 0
-            assert config.llm.transformer.vocab_size > 0
+            assert config.llm.vocab_size > 0
             assert config.training.max_iters > 0
             assert config.training.batch.batch_size > 0
             assert 0 <= config.llm.transformer.dropout < 1
 
     def test_config_round_trip(self, example_configs_dir):
         """Test that configs can be serialized and deserialized."""
-        config_path = example_configs_dir / "gpt2_debug.yaml"
+        config_path = example_configs_dir / "gpt2" / "gpt2_debug_cpu.yaml"
         config = loader.load_training_config(config_path, gpt.GPT2Config)
 
         # Convert to dict and back
         config_dict = {"llm": config.llm.model_dump(), "training": config.training.model_dump()}
 
         # Should be able to recreate from dict
-        # Project
-        from pretraining.configs import core
-
         config2 = core.TrainerConfig(
             llm=gpt.GPT2Config.model_validate(config_dict["llm"]),
             training=config.training.__class__.model_validate(config_dict["training"]),
@@ -192,7 +190,6 @@ class TestTransformerConfigs:
 
         # Test valid config with FFN (using GPT2TransformerConfig)
         config = transformer.GPT2TransformerConfig(
-            vocab_size=100,
             hidden_dim=64,
             n_layers=2,
             block_size=128,
@@ -216,7 +213,6 @@ class TestTransformerConfigs:
             use_flash_attention=False,
         )
         config = transformer.DeepSeek3TransformerConfig(
-            vocab_size=100,
             hidden_dim=64,
             n_layers=2,
             block_size=128,
@@ -230,7 +226,6 @@ class TestTransformerConfigs:
         # Test invalid config with both FFN and MoE
         with pytest.raises(ValueError, match="Cannot have both ffn and moe"):
             transformer.DeepSeek3TransformerConfig(
-                vocab_size=100,
                 hidden_dim=64,
                 n_layers=2,
                 block_size=128,
@@ -243,7 +238,6 @@ class TestTransformerConfigs:
         # Test invalid config with neither FFN nor MoE
         with pytest.raises(ValueError, match="Must have either ffn or moe"):
             transformer.GPT2TransformerConfig(
-                vocab_size=100,
                 hidden_dim=64,
                 n_layers=2,
                 block_size=128,
@@ -281,9 +275,7 @@ class TestLLMConfigs:
     def test_gpt2_config_validation(self):
         """Test GPT-2 specific validation."""
         # Create configs with mismatched dimensions
-        token_config = embeddings.TokenEmbeddingConfig(
-            vocab_size=1000, embedding_dim=64, init_std=0.02
-        )
+        token_config = embeddings.TokenEmbeddingConfig(embedding_dim=64, init_std=0.02)
 
         position_config = embeddings.LearnedPositionEmbeddingConfig(
             max_position_embeddings=128,
@@ -305,7 +297,6 @@ class TestLLMConfigs:
             ffn_config = feedforward.FFNConfig(intermediate_dim=256, activation="gelu", bias=True)
 
             transformer_config = transformer.GPT2TransformerConfig(
-                vocab_size=1000,
                 hidden_dim=64,
                 n_layers=2,
                 block_size=128,
@@ -315,6 +306,7 @@ class TestLLMConfigs:
             )
 
             gpt.GPT2Config(
+                vocab_size=1000,
                 token_embedding=token_config,
                 position_embedding=position_config,
                 transformer=transformer_config,
@@ -332,9 +324,7 @@ class TestLLMConfigs:
     def test_gpt2_requires_tied_embeddings(self):
         """Test that GPT-2 requires tied embeddings."""
         # Create a valid base config
-        token_config = embeddings.TokenEmbeddingConfig(
-            vocab_size=1000, embedding_dim=64, init_std=0.02
-        )
+        token_config = embeddings.TokenEmbeddingConfig(embedding_dim=64, init_std=0.02)
         position_config = embeddings.LearnedPositionEmbeddingConfig(
             max_position_embeddings=128, embedding_dim=64, init_std=0.02
         )
@@ -348,7 +338,6 @@ class TestLLMConfigs:
         )
         ffn_config = feedforward.FFNConfig(intermediate_dim=256, activation="gelu", bias=True)
         transformer_config = transformer.GPT2TransformerConfig(
-            vocab_size=1000,
             hidden_dim=64,
             n_layers=2,
             block_size=128,
@@ -360,6 +349,7 @@ class TestLLMConfigs:
         # Test untied embeddings (should fail)
         with pytest.raises(ValueError, match="GPT-2 requires tied embeddings"):
             gpt.GPT2Config(
+                vocab_size=1000,
                 token_embedding=token_config,
                 position_embedding=position_config,
                 transformer=transformer_config,
@@ -372,6 +362,7 @@ class TestLLMConfigs:
         # Test lm_head_bias with tied embeddings (should fail)
         with pytest.raises(ValueError, match="GPT-2 cannot use lm_head_bias"):
             gpt.GPT2Config(
+                vocab_size=1000,
                 token_embedding=token_config,
                 position_embedding=position_config,
                 transformer=transformer_config,

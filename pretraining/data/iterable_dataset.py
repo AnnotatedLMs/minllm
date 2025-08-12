@@ -5,14 +5,13 @@ import typing
 
 # Third Party
 import numpy as np
-import torch
-import torch.utils.data
+from torch.utils import data
 
 # Project
-from pretraining.utils.training import distributed
+from pretraining.utils.training import dist_utils
 
 
-class IterableDataset(torch.utils.data.IterableDataset[typing.Dict[str, typing.Any]]):
+class IterableDataset(data.IterableDataset[typing.Dict[str, typing.Any]]):
     """
     Wraps an indexable dataset as an IterableDataset for distributed training.
 
@@ -34,7 +33,7 @@ class IterableDataset(torch.utils.data.IterableDataset[typing.Dict[str, typing.A
 
     def __init__(
         self,
-        dataset: torch.utils.data.Dataset,
+        dataset: data.Dataset,
         global_batch_size: int,
         seed: int = 0,
         epoch: int = 0,
@@ -51,8 +50,8 @@ class IterableDataset(torch.utils.data.IterableDataset[typing.Dict[str, typing.A
         self.work_dir = work_dir
 
         # Get distributed info
-        self.rank = distributed.get_global_rank()
-        self.world_size = distributed.get_world_size()
+        self.rank = dist_utils.get_global_rank()
+        self.world_size = dist_utils.get_world_size()
 
         # Validate and calculate sizes
         self._validate_batch_size()
@@ -93,7 +92,7 @@ class IterableDataset(torch.utils.data.IterableDataset[typing.Dict[str, typing.A
         """Save global indices on rank 0, load on all ranks."""
         if self.rank == 0:
             self._save_global_indices()
-        distributed.barrier()  # Wait for rank 0 to save
+        dist_utils.barrier()  # Wait for rank 0 to save
 
     def _save_global_indices(self) -> None:
         """Build and save global indices to file."""
@@ -181,7 +180,7 @@ class IterableDataset(torch.utils.data.IterableDataset[typing.Dict[str, typing.A
 
     def _shard_indices_by_worker(self, indices: np.ndarray) -> np.ndarray:
         """Further shard indices across DataLoader workers."""
-        worker_info = torch.utils.data.get_worker_info()
+        worker_info = data.get_worker_info()
 
         if worker_info is None:
             # Single worker - return all indices

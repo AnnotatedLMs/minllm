@@ -1,0 +1,130 @@
+# Llama 3.1 Debug Configuration (Tiny model for testing)
+
+model:
+  vocab_size: 1000  # Tiny vocab
+
+  # Token embeddings
+  token_embedding:
+    embedding_dim: 64  # Tiny dim
+    init_std: 0.02
+
+  # Transformer backbone
+  transformer:
+    hidden_dim: 64
+    n_layers: 2  # Just 2 layers
+    block_size: 128
+    bias: false
+
+    # RMSNorm normalization
+    normalization:
+      norm_eps: 0.00001  # 1e-5
+
+    # Grouped Query Attention (GQA)
+    attention:
+      num_heads: 4
+      num_kv_heads: 2  # GQA with 2:1 ratio
+      bias: false
+      max_seq_length: 128
+      is_causal: true
+      use_flash_attention: false
+
+    # RoPE position encoding
+    rope:
+      theta: 10000.0
+      scaling:  # For extended context
+        scale_factor: 2.0
+        low_freq_factor: 1.0
+        high_freq_factor: 4.0
+        original_context_len: 128
+
+    # SwiGLU FFN
+    ffn:
+      intermediate_dim: 172  # Following Llama's calculation
+      activation: silu
+      bias: false
+      ffn_dim_multiplier: 1.3
+      multiple_of: 256
+
+  # Output head
+  output_head:
+    tie_word_embeddings: false
+    lm_head_bias: false
+
+# Training configuration
+training:
+  # Top-level training loop fields
+  token_budget: 2560  # 10 steps × 2 batch × 128 seq_len
+  max_iters: 10  # Safety limit for debugging
+  log_interval: 1
+  seed: 1337
+  gradient_accumulation_steps: 1
+  precision: fp32
+
+  # Data configuration
+  data:
+    dataset: debug
+    data_dir: ./data/debug
+    num_workers: 1
+    pin_memory: false
+
+  # Batch configuration
+  batch:
+    batch_size: 2
+    sequence_length: 128
+
+  # Optimizer configuration
+  optimizer:
+    optimizer_type: adamw
+    learning_rate: 0.0003
+    weight_decay: 0.1
+    beta1: 0.9
+    beta2: 0.95
+    grad_clip: 1.0
+    eps: 0.00000001
+    parameter_grouping: dimension
+
+  # Learning rate schedule
+  lr_schedule:
+    schedule_type: cosine
+    warmup_iters: 2
+    lr_decay_iters: 10
+    min_lr: 0.00001
+
+  # Loss configuration
+  loss:
+    cross_entropy_weight: 1.0
+
+  # Evaluation configuration
+  evaluation:
+    eval_interval: 5
+    eval_iters: 2
+    num_eval_batches: 50
+
+  # Checkpointing configuration
+  checkpoint:
+    save_dir: ./checkpoints/debug/llama31
+    save_interval: 10
+    save_best: false
+    keep_last_n: 1
+
+  # Torch compilation configuration
+  torch_compilation:
+    compile: false
+
+  # Execution configuration
+  execution:
+    strategy: single
+    single:
+      device: cuda  # Use single GPU
+
+  # Weights & Biases logging
+  wandb_logging:
+    enabled: false
+    project: minllm-debug
+    entity: null  # Set your W&B entity/username
+    group: null
+    name: debug-llama31
+    tags: ["debug", "llama3", "test"]
+    log_artifacts: false
+    rank_zero_only: true
+    log_interval: 1

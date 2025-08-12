@@ -39,7 +39,7 @@ class TestYAMLToModelDebug:
 
     def test_gpt2_debug_yaml_to_model(self, debug_configs_dir: pathlib.Path) -> None:
         """Test GPT-2 debug YAML loads and creates working model."""
-        config_path = debug_configs_dir / "gpt2_debug.yaml"
+        config_path = debug_configs_dir / "gpt2" / "gpt2_debug_cpu.yaml"
 
         # Parse config
         config = loader.load_training_config(config_path, gpt.GPT2Config)
@@ -52,7 +52,7 @@ class TestYAMLToModelDebug:
 
         # Test forward pass
         batch_size, seq_len = 2, 32
-        input_ids = torch.randint(0, config.llm.transformer.vocab_size, (batch_size, seq_len))
+        input_ids = torch.randint(0, config.llm.vocab_size, (batch_size, seq_len))
 
         # Put model in eval mode and forward
         model.eval()
@@ -60,7 +60,7 @@ class TestYAMLToModelDebug:
             output = model.forward(input_ids=input_ids)
 
         # Check output shape
-        assert output.logits.shape == (batch_size, seq_len, config.llm.transformer.vocab_size)
+        assert output.logits.shape == (batch_size, seq_len, config.llm.vocab_size)
 
         # Verify position embeddings exist
         assert hasattr(model, "position_embeddings")
@@ -68,7 +68,7 @@ class TestYAMLToModelDebug:
 
     def test_llama_debug_yaml_to_model(self, debug_configs_dir: pathlib.Path) -> None:
         """Test Llama debug YAML loads and creates working model."""
-        config_path = debug_configs_dir / "llama31_debug.yaml"
+        config_path = debug_configs_dir / "llama3" / "llama3_debug_cpu.yaml"
 
         # Parse config
         config = loader.load_training_config(config_path, llama.Llama3Config)
@@ -81,7 +81,7 @@ class TestYAMLToModelDebug:
 
         # Test forward pass with smaller sequence for memory
         batch_size, seq_len = 1, 32
-        input_ids = torch.randint(0, config.llm.transformer.vocab_size, (batch_size, seq_len))
+        input_ids = torch.randint(0, config.llm.vocab_size, (batch_size, seq_len))
 
         # Put model in eval mode and forward
         model.eval()
@@ -89,7 +89,7 @@ class TestYAMLToModelDebug:
             output = model.forward(input_ids=input_ids)
 
         # Check output shape
-        assert output.logits.shape == (batch_size, seq_len, config.llm.transformer.vocab_size)
+        assert output.logits.shape == (batch_size, seq_len, config.llm.vocab_size)
 
         # Verify no position embeddings
         assert not hasattr(model, "position_embeddings")
@@ -100,7 +100,7 @@ class TestYAMLToModelDebug:
 
     def test_deepseek_debug_yaml_to_model(self, debug_configs_dir: pathlib.Path) -> None:
         """Test DeepSeek debug YAML loads and creates working model."""
-        config_path = debug_configs_dir / "deepseek3_debug.yaml"
+        config_path = debug_configs_dir / "deepseek3" / "deepseek3_debug_cpu.yaml"
 
         # Parse config
         config = loader.load_training_config(config_path, deepseek.DeepSeek3Config)
@@ -113,7 +113,7 @@ class TestYAMLToModelDebug:
 
         # Test forward pass with very small sequence
         batch_size, seq_len = 1, 16
-        input_ids = torch.randint(0, config.llm.transformer.vocab_size, (batch_size, seq_len))
+        input_ids = torch.randint(0, config.llm.vocab_size, (batch_size, seq_len))
 
         # Test inference forward (no MTP outputs in inference mode)
         model.eval()
@@ -121,7 +121,7 @@ class TestYAMLToModelDebug:
             output = model.forward(input_ids=input_ids)
 
         # Check output shape
-        assert output.logits.shape == (batch_size, seq_len, config.llm.transformer.vocab_size)
+        assert output.logits.shape == (batch_size, seq_len, config.llm.vocab_size)
         # In eval mode, MTP logits should not be computed
         assert output.mtp_logits is None
 
@@ -132,9 +132,9 @@ class TestYAMLToModelDebug:
     def test_model_parameter_counts(self, debug_configs_dir: pathlib.Path) -> None:
         """Test that debug models have reasonable parameter counts."""
         for config_name, model_class, config_class in [
-            ("gpt2_debug.yaml", gpt2.GPT2, gpt.GPT2Config),
-            ("llama31_debug.yaml", llama3.Llama3, llama.Llama3Config),
-            ("deepseek3_debug.yaml", deepseek3.DeepSeek3, deepseek.DeepSeek3Config),
+            ("gpt2/gpt2_debug_cpu.yaml", gpt2.GPT2, gpt.GPT2Config),
+            ("llama3/llama3_debug_cpu.yaml", llama3.Llama3, llama.Llama3Config),
+            ("deepseek3/deepseek3_debug_cpu.yaml", deepseek3.DeepSeek3, deepseek.DeepSeek3Config),
         ]:
             config_path = debug_configs_dir / config_name
             config = loader.load_training_config(config_path, config_class)

@@ -4,7 +4,7 @@ import typing
 # Third Party
 import jaxtyping
 import torch
-import torch.nn as nn
+from torch import nn
 
 # Project
 from pretraining.common.base import llm
@@ -13,9 +13,10 @@ from pretraining.common.patterns.blocks import gpt2 as gpt2_blocks
 from pretraining.common.patterns.position import learned
 from pretraining.configs.model.architectures import gpt
 from pretraining.utils import weight_init
+from pretraining.utils.training import fsdp_policies
 
 
-class GPT2(llm.BaseLLM):
+class GPT2(llm.BaseLLM, fsdp_policies.FSDPMixin):
     """
     GPT-2 Language Model implementation.
 
@@ -127,7 +128,7 @@ class GPT2(llm.BaseLLM):
         """Create GPT2 from a config object."""
         return cls(
             # Core dimensions
-            vocab_size=config.token_embedding.vocab_size,
+            vocab_size=config.vocab_size,
             hidden_dim=config.transformer.hidden_dim,
             n_layers=config.transformer.n_layers,
             block_size=config.transformer.block_size,
@@ -245,7 +246,7 @@ class GPT2(llm.BaseLLM):
     @torch.no_grad()
     def generate(
         self,
-        idx: jaxtyping.Int[torch.Tensor, "batch seq"],
+        token_ids: jaxtyping.Int[torch.Tensor, "batch seq"],
         max_new_tokens: int,
         temperature: float = 1.0,
         top_k: typing.Optional[int] = None,
@@ -257,7 +258,7 @@ class GPT2(llm.BaseLLM):
         Handles context window cropping when sequence exceeds block_size.
 
         Args:
-            idx: Initial token indices [batch, seq]
+            token_ids: Initial token indices [batch, seq]
             max_new_tokens: Number of tokens to generate
             temperature: Sampling temperature
             top_k: If set, only sample from top k most likely tokens
@@ -268,11 +269,15 @@ class GPT2(llm.BaseLLM):
         """
         for _ in range(max_new_tokens):
             # Crop context if it exceeds block_size
-            idx_cond = idx if idx.size(1) <= self.block_size else idx[:, -self.block_size :]
+            context_tokens = (
+                token_ids
+                if token_ids.size(1) <= self.block_size
+                else token_ids[:, -self.block_size :]
+            )
 
             # Forward the model to get logits
             model_output = self.forward(
-                input_ids=idx_cond,
+                input_ids=context_tokens,
                 attention_mask=kwargs.get("attention_mask"),
             )
             logits = model_output.logits
@@ -289,12 +294,12 @@ class GPT2(llm.BaseLLM):
             probs = torch.nn.functional.softmax(logits, dim=-1)
 
             # Sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1)
+            next_token = torch.multinomial(probs, num_samples=1)
 
             # Append to the sequence
-            idx = torch.cat((idx, idx_next), dim=1)
+            token_ids = torch.cat((token_ids, next_token), dim=1)
 
-        return idx
+        return token_ids
 
     def forward(
         self,
@@ -332,3 +337,18 @@ class GPT2(llm.BaseLLM):
         logits = self._compute_logits(hidden_states)
 
         return outputs.ForwardOutput(logits=logits)
+
+    def get_fsdp_wrappable_modules(self) -> typing.Set[typing.Type[nn.Module]]:
+        return {gpt2_blocks.GPT2TransformerBlock}
+
+    def get_transformer_blocks(self) -> typing.List[nn.Module]:
+        return list(self.blocks)
+
+    def get_fsdp_special_modules(self) -> typing.Dict[str, nn.Module]:
+        special_modules = {}
+        special_modules["token_embeddings"] = self.token_embeddings
+        special_modules["position_embeddings"] = self.position_embeddings
+
+        # NOT including lm_head because: self.lm_head = self.token_embeddings (weight tied)
+
+        return special_modules
