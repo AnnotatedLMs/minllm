@@ -1,0 +1,128 @@
+# FP16 Precision Feature Test
+# Tests half precision training
+
+model:
+  vocab_size: 50257  # Must match FineWeb tokenizer
+
+  # Token embeddings
+  token_embedding:
+    embedding_dim: 128
+    init_std: 0.02
+
+  # Position embeddings
+  position_embedding:
+    max_position_embeddings: 256
+    embedding_dim: 128
+    init_std: 0.02
+
+  # Transformer backbone
+  transformer:
+    hidden_dim: 128
+    n_layers: 2
+    block_size: 256
+    dropout: 0.0
+    bias: true
+
+    # Layer normalization
+    normalization:
+      norm_eps: 0.00001
+      bias: true
+
+    # Multi-head attention
+    attention:
+      num_heads: 4
+      bias: true
+      max_seq_length: 256
+      is_causal: true
+      use_flash_attention: false
+
+    # Feed-forward network
+    ffn:
+      intermediate_dim: 512
+      activation: gelu
+      bias: true
+
+  # Output head
+  output_head:
+    tie_word_embeddings: true
+    lm_head_bias: false
+
+# Training configuration
+training:
+  token_budget: 8192
+  max_iters: 50
+  seed: 1337
+  gradient_accumulation_steps: 2
+  precision: fp16  # Testing fp16
+
+  # Data configuration
+  data:
+    dataset: fineweb
+    data_dir: ./data/fineweb
+    num_workers: 1
+    pin_memory: false
+
+  # Batch configuration
+  batch:
+    batch_size: 4
+    sequence_length: 256
+
+  # Optimizer configuration
+  optimizer:
+    optimizer_type: adamw
+    learning_rate: 0.001
+    weight_decay: 0.1
+    beta1: 0.9
+    beta2: 0.95
+    grad_clip: 1.0
+    eps: 0.00000001
+    parameter_grouping: dimension
+
+  # Learning rate schedule
+  lr_schedule:
+    schedule_type: cosine
+    warmup_iters: 5
+    lr_decay_iters: 32
+    min_lr: 0.0001
+
+  # Loss configuration
+  loss:
+    cross_entropy_weight: 1.0
+
+  # Evaluation configuration
+  evaluation:
+    eval_interval: 10
+    eval_iters: 2
+    num_eval_batches: 10
+
+  # Checkpointing configuration
+  checkpoint:
+    save_dir: ./checkpoints/features/precision_fp16
+    save_interval: 25
+    save_best: false
+    keep_last_n: 1
+
+  # Logging configuration
+  log_interval: 2
+
+  # Torch compilation
+  torch_compilation:
+    compile: false
+
+  # Execution configuration
+  execution:
+    strategy: single
+    single:
+      device: cuda
+
+  # Weights & Biases logging
+  wandb_logging:
+    enabled: false
+    project: minllm-features
+    entity: null
+    group: feature-tests
+    name: precision-fp16
+    tags: ["feature", "precision", "fp16"]
+    log_artifacts: false
+    rank_zero_only: true
+    log_interval: 2

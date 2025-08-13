@@ -1,0 +1,135 @@
+# GPT-2 MPS (Apple Silicon) Smoke Test
+# Tests training on Apple Silicon GPUs
+
+model:
+  vocab_size: 50257
+
+  # Weight initialization
+  weight_init:
+    std: 0.02
+    residual_pattern: 'c_proj.weight'
+    position_init_std: 0.02
+
+  # Token embeddings
+  token_embedding:
+    embedding_dim: 512  # Smaller for MPS
+    init_std: 0.02
+
+  # Position embeddings
+  position_embedding:
+    max_position_embeddings: 1024
+    embedding_dim: 512
+    init_std: 0.02
+
+  # Transformer backbone
+  transformer:
+    hidden_dim: 512
+    n_layers: 6
+    block_size: 1024
+    dropout: 0.1
+    bias: true
+
+    # Layer normalization
+    normalization:
+      norm_eps: 0.00001
+      bias: true
+
+    # Multi-head attention
+    attention:
+      num_heads: 8
+      bias: true
+      max_seq_length: 1024
+      is_causal: true
+      use_flash_attention: false  # Flash attention not supported on MPS
+
+    # Feed-forward network
+    ffn:
+      intermediate_dim: 2048
+      activation: gelu
+      bias: true
+
+  # Output head
+  output_head:
+    tie_word_embeddings: true
+    lm_head_bias: false
+
+# Training configuration
+training:
+  # ~5M tokens for MPS smoke test
+  token_budget: 5242880
+  max_iters: 5000
+  seed: 1337
+  gradient_accumulation_steps: 4
+  precision: fp32  # MPS doesn't support bf16 yet
+
+  # Data configuration
+  data:
+    dataset: fineweb
+    data_dir: ./data/fineweb
+    num_workers: 2  # Fewer workers for MPS
+    pin_memory: false  # No pinning for MPS
+
+  # Batch configuration
+  batch:
+    batch_size: 4
+    sequence_length: 1024
+
+  # Optimizer configuration
+  optimizer:
+    optimizer_type: adamw
+    learning_rate: 0.0006
+    weight_decay: 0.1
+    beta1: 0.9
+    beta2: 0.95
+    grad_clip: 1.0
+    eps: 0.00000001
+    parameter_grouping: dimension
+
+  # Learning rate schedule
+  lr_schedule:
+    schedule_type: cosine
+    warmup_iters: 100
+    lr_decay_iters: 1280
+    min_lr: 0.00006
+
+  # Loss configuration
+  loss:
+    cross_entropy_weight: 1.0
+
+  # Evaluation configuration
+  evaluation:
+    eval_interval: 100
+    eval_iters: 10
+    num_eval_batches: 50
+
+  # Checkpointing configuration
+  checkpoint:
+    save_dir: ./checkpoints/smoke/mps/gpt2
+    save_interval: 500
+    save_best: true
+    keep_last_n: 2
+
+  # Logging configuration
+  log_interval: 10
+
+  # Torch compilation
+  torch_compilation:
+    compile: false  # Compile not well-supported on MPS yet
+
+  # Execution configuration
+  execution:
+    strategy: single
+    single:
+      device: mps
+
+  # Weights & Biases logging
+  wandb_logging:
+    enabled: true
+    project: minllm-smoke
+    entity: null
+    group: smoke-mps
+    name: gpt2-mps
+    tags: ["smoke", "gpt2", "mps", "apple-silicon"]
+    log_artifacts: false
+    rank_zero_only: true
+    log_interval: 10

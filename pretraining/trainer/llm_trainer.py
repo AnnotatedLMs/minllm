@@ -23,7 +23,7 @@ from pretraining.utils.training import evaluation
 from pretraining.utils.training import loss as loss_utils
 from pretraining.utils.training import metrics
 from pretraining.utils.training import state
-from pretraining.utils.training.checkpointers import builder as checkpointer_builder
+from pretraining.utils.training.checkpointers import checkpointer_factory
 
 
 class LLMTrainer:
@@ -116,6 +116,12 @@ class LLMTrainer:
 
         self.num_params = sum(p.numel() for p in self.model.parameters())
 
+        # Apply torch.compile if configured
+        if self.training_config.torch_compilation.compile:
+            compile_mode = self.training_config.torch_compilation.compile_mode or "default"
+            self.logger.info(f"Compiling model with torch.compile (mode={compile_mode})")
+            self.model = torch.compile(self.model, mode=compile_mode, dynamic=False)
+
         # Initialize wandb if enabled
         if self.training_config.wandb_logging.enabled and (
             not self.training_config.wandb_logging.rank_zero_only or self.is_main_process
@@ -124,13 +130,22 @@ class LLMTrainer:
             wandb_dir = pathlib.Path(self.training_config.checkpoint.save_dir) / "wandb"
             wandb_dir.mkdir(parents=True, exist_ok=True)
 
+            # Add timestamp to run name if provided
+            run_name = self.training_config.wandb_logging.name
+            if run_name:
+                # Standard Library
+                from datetime import datetime
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                run_name = f"{run_name}_{timestamp}"
+
             # Initialize wandb
             wandb.init(
                 dir=str(wandb_dir),
                 project=self.training_config.wandb_logging.project,
                 entity=self.training_config.wandb_logging.entity,
                 group=self.training_config.wandb_logging.group,
-                name=self.training_config.wandb_logging.name,
+                name=run_name,
                 tags=self.training_config.wandb_logging.tags,
                 config=self.config.model_dump(),  # Convert full config to dict
             )
@@ -512,7 +527,7 @@ class LLMTrainer:
         self.optimizer.zero_grad(set_to_none=True)
 
         # Build checkpointer based on execution strategy
-        checkpointer = checkpointer_builder.build_checkpointer(
+        checkpointer = checkpointer_factory.build_checkpointer(
             config=self.training_config.checkpoint,
             execution=self.training_config.execution,
             dist_model=self.dist_model
@@ -578,7 +593,7 @@ class LLMTrainer:
             True if checkpoint was loaded, False otherwise
         """
         # Build checkpointer
-        checkpointer = checkpointer_builder.build_checkpointer(
+        checkpointer = checkpointer_factory.build_checkpointer(
             config=self.training_config.checkpoint,
             execution=self.training_config.execution,
             dist_model=self.dist_model

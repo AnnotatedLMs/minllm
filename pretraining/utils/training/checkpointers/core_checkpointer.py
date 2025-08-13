@@ -156,10 +156,20 @@ class Checkpointer(base_checkpointer.BaseCheckpointer):
         logger.info(f"Loading checkpoint from {checkpoint_dir}")
 
         # Load each component from separate files
-        model_state = torch.load(checkpoint_dir / "model.pt", map_location=device)
-        optimizer_state = torch.load(checkpoint_dir / "optim.pt", map_location=device)
-        scheduler_state = torch.load(checkpoint_dir / "scheduler.pt", map_location=device)
-        training_state = torch.load(checkpoint_dir / "train.pt", map_location=device)
+        # Use weights_only=False for backward compatibility with PyTorch 2.6+
+        # This is safe since we only load our own checkpoints
+        model_state = torch.load(
+            checkpoint_dir / "model.pt", map_location=device, weights_only=False
+        )
+        optimizer_state = torch.load(
+            checkpoint_dir / "optim.pt", map_location=device, weights_only=False
+        )
+        scheduler_state = torch.load(
+            checkpoint_dir / "scheduler.pt", map_location=device, weights_only=False
+        )
+        training_state = torch.load(
+            checkpoint_dir / "train.pt", map_location=device, weights_only=False
+        )
 
         # Create CheckpointData
         ckpt_data = checkpoint_data.CheckpointData(

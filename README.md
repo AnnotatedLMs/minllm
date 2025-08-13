@@ -2,13 +2,13 @@
 
   ## Overview
 
-  This repository is a reference guide for transformer-based Large Language Models (LLMs). The code is intentionally approximate, not optimized, nor well engineered.
+  This repository is a very rough reference guide for transformer-based Large Language Models (LLMs). The code is intentionally approximate, not optimized, nor well engineered.
 
-  The organization is very overly granular -- it's hard for me to learn stuff when everything is smushed together.
+  The organization is very overly granular -- just to make it possible to explain each operation.
 
-  I started writing this while preparing for interviews, and it was primarily intended as a personal reference that I could easily navigate using VSCode navigation features.
+  I started writing this while preparing for interviews, and it was intended as a personal reference that I could easily navigate using VSCode navigation features.
 
-  But I provide it here in case anyone wants to peek at stuff.
+  But I provide it here in case anyone else finds this useful.
 
 ## Installation Guide
 
@@ -19,14 +19,11 @@ Install uv (Python package manager):
 # macOS/Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Or using Homebrew
-brew install uv
-
 ### Quick Setup
 Clone the repository and set up the environment:
 ```bash
-#
-git clone
+# Clone repo
+git clone https://github.com/chengyjonathan/minllm.git
 
 # Install all dependencies
 uv sync

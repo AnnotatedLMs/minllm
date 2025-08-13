@@ -1,49 +1,44 @@
-# GPT-2 Debug Configuration (Tiny model for testing)
+# FP32 Precision Feature Test
+# Tests full precision training
 
 model:
-  vocab_size: 50257  # GPT-2 vocab for FineWeb
-
-  # Weight initialization
-  weight_init:
-    std: 0.02
-    residual_pattern: 'c_proj.weight'
-    position_init_std: 0.02
+  vocab_size: 50257  # Must match FineWeb tokenizer
 
   # Token embeddings
   token_embedding:
-    embedding_dim: 64  # Tiny dim
+    embedding_dim: 128
     init_std: 0.02
 
-  # Position embeddings (GPT-2 uses learned position embeddings)
+  # Position embeddings
   position_embedding:
-    max_position_embeddings: 128
-    embedding_dim: 64
+    max_position_embeddings: 256
+    embedding_dim: 128
     init_std: 0.02
 
   # Transformer backbone
   transformer:
-    hidden_dim: 64
-    n_layers: 2  # Just 2 layers
-    block_size: 128
+    hidden_dim: 128
+    n_layers: 2
+    block_size: 256
     dropout: 0.0
     bias: true
 
     # Layer normalization
     normalization:
-      norm_eps: 0.00001  # 1e-5
+      norm_eps: 0.00001
       bias: true
 
     # Multi-head attention
     attention:
       num_heads: 4
       bias: true
-      max_seq_length: 128
+      max_seq_length: 256
       is_causal: true
       use_flash_attention: false
 
     # Feed-forward network
     ffn:
-      intermediate_dim: 256  # 4 * hidden_dim
+      intermediate_dim: 512
       activation: gelu
       bias: true
 
@@ -54,30 +49,28 @@ model:
 
 # Training configuration
 training:
-  # Top-level training loop fields
-  token_budget: 2560  # 10 steps × 2 batch × 128 seq_len
-  max_iters: 10  # Safety limit for debugging
-  log_interval: 1
+  token_budget: 8192
+  max_iters: 50
   seed: 1337
-  gradient_accumulation_steps: 1
-  precision: fp32
+  gradient_accumulation_steps: 2
+  precision: fp32  # Testing fp32
 
   # Data configuration
   data:
-    dataset: fineweb10B
-    data_dir: ./pretraining/data/sample/fineweb10B
+    dataset: fineweb
+    data_dir: ./data/fineweb
     num_workers: 1
     pin_memory: false
 
   # Batch configuration
   batch:
-    batch_size: 2
-    sequence_length: 128
+    batch_size: 4
+    sequence_length: 256
 
   # Optimizer configuration
   optimizer:
     optimizer_type: adamw
-    learning_rate: 0.0006
+    learning_rate: 0.001
     weight_decay: 0.1
     beta1: 0.9
     beta2: 0.95
@@ -88,9 +81,9 @@ training:
   # Learning rate schedule
   lr_schedule:
     schedule_type: cosine
-    warmup_iters: 2
-    lr_decay_iters: 10
-    min_lr: 0.00006
+    warmup_iters: 5
+    lr_decay_iters: 32
+    min_lr: 0.0001
 
   # Loss configuration
   loss:
@@ -98,18 +91,21 @@ training:
 
   # Evaluation configuration
   evaluation:
-    eval_interval: 5
+    eval_interval: 10
     eval_iters: 2
-    num_eval_batches: 50
+    num_eval_batches: 10
 
   # Checkpointing configuration
   checkpoint:
-    save_dir: ./checkpoints/debug/gpt2
-    save_interval: 10
+    save_dir: ./checkpoints/features/precision_fp32
+    save_interval: 25
     save_best: false
     keep_last_n: 1
 
-  # Torch compilation configuration
+  # Logging configuration
+  log_interval: 2
+
+  # Torch compilation
   torch_compilation:
     compile: false
 
@@ -117,16 +113,16 @@ training:
   execution:
     strategy: single
     single:
-      device: cpu  # Use CPU for debug
+      device: cuda
 
   # Weights & Biases logging
   wandb_logging:
     enabled: false
-    project: minllm-debug
-    entity: null  # Set your W&B entity/username
-    group: null
-    name: debug-gpt2
-    tags: ["debug", "gpt2", "test"]
+    project: minllm-features
+    entity: null
+    group: feature-tests
+    name: precision-fp32
+    tags: ["feature", "precision", "fp32"]
     log_artifacts: false
     rank_zero_only: true
-    log_interval: 1
+    log_interval: 2

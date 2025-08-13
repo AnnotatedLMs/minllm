@@ -47,6 +47,7 @@ class Attention(attention.BaseAttention):
         dropout: typing.Optional[float] = None,
         is_causal: bool = True,
         use_flash_attention: bool = True,
+        attention_scale: typing.Optional[float] = None,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -55,6 +56,7 @@ class Attention(attention.BaseAttention):
         self.attn_dropout = nn.Dropout(dropout) if dropout is not None else None
         self.is_causal = is_causal
         self.use_flash_attention = use_flash_attention
+        self.attention_scale = attention_scale  # None = use standard 1/sqrt(head_dim)
 
         assert hidden_dim % num_heads == 0
 
@@ -74,7 +76,12 @@ class Attention(attention.BaseAttention):
         scores = torch.matmul(q, k.transpose(-2, -1))
 
         # Apply scaling
-        scale: float = math.sqrt(self.head_dim)
+        if self.attention_scale is not None:
+            # Use custom scale (e.g., 0.12 from nanogpt)
+            scale: float = 1.0 / self.attention_scale
+        else:
+            # Standard scaling: 1/sqrt(head_dim)
+            scale: float = math.sqrt(self.head_dim)
         scaled_scores: jaxtyping.Float[torch.Tensor, "batch n_heads seq_q seq_k"]
         scaled_scores = scores / scale
 

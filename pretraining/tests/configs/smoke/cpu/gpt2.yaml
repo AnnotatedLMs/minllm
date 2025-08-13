@@ -1,0 +1,135 @@
+# GPT-2 CPU Smoke Test Configuration
+# Minimal config for testing on CPU
+
+model:
+  vocab_size: 50257  # Matching the tokenizer used for FineWeb data
+
+  # Weight initialization
+  weight_init:
+    std: 0.02
+    residual_pattern: 'c_proj.weight'
+    position_init_std: 0.02
+
+  # Token embeddings
+  token_embedding:
+    embedding_dim: 256  # Smaller for CPU
+    init_std: 0.02
+
+  # Position embeddings
+  position_embedding:
+    max_position_embeddings: 512
+    embedding_dim: 256
+    init_std: 0.02
+
+  # Transformer backbone
+  transformer:
+    hidden_dim: 256
+    n_layers: 4  # Fewer layers for CPU
+    block_size: 512
+    dropout: 0.1
+    bias: true
+
+    # Layer normalization
+    normalization:
+      norm_eps: 0.00001
+      bias: true
+
+    # Multi-head attention
+    attention:
+      num_heads: 8
+      bias: true
+      max_seq_length: 512
+      is_causal: true
+      use_flash_attention: false
+
+    # Feed-forward network
+    ffn:
+      intermediate_dim: 1024  # 4 * hidden_dim
+      activation: gelu
+      bias: true
+
+  # Output head
+  output_head:
+    tie_word_embeddings: true
+    lm_head_bias: false
+
+# Training configuration
+training:
+  # ~1M tokens for CPU smoke test (faster)
+  token_budget: 1048576  # 1M tokens
+  max_iters: 2000  # Safety limit
+  seed: 1337
+  gradient_accumulation_steps: 8
+  precision: fp32  # CPU doesn't support bf16
+
+  # Data configuration
+  data:
+    dataset: fineweb
+    data_dir: ./data/fineweb
+    num_workers: 2
+    pin_memory: false  # No pinning for CPU
+
+  # Batch configuration
+  batch:
+    batch_size: 4  # Smaller batch for CPU
+    sequence_length: 512
+
+  # Optimizer configuration
+  optimizer:
+    optimizer_type: adamw
+    learning_rate: 0.0006
+    weight_decay: 0.1
+    beta1: 0.9
+    beta2: 0.95
+    grad_clip: 1.0
+    eps: 0.00000001
+    parameter_grouping: dimension
+
+  # Learning rate schedule
+  lr_schedule:
+    schedule_type: cosine
+    warmup_iters: 50
+    lr_decay_iters: 512  # 1M / (4 * 512)
+    min_lr: 0.00006
+
+  # Loss configuration
+  loss:
+    cross_entropy_weight: 1.0
+
+  # Evaluation configuration
+  evaluation:
+    eval_interval: 50  # Every 50 steps (~102K tokens)
+    eval_iters: 5
+    num_eval_batches: 20
+
+  # Checkpointing configuration
+  checkpoint:
+    save_dir: ./checkpoints/smoke/gpt2_cpu
+    save_interval: 200  # Every 200 steps (~400K tokens)
+    save_best: true
+    keep_last_n: 1
+
+  # Logging configuration
+  log_interval: 10
+
+  # Torch compilation
+  torch_compilation:
+    compile: false  # Disable for CPU
+
+  # Execution configuration
+  execution:
+    strategy: single
+    single:
+      device: cpu
+
+  # Weights & Biases logging
+  wandb_logging:
+    enabled: false  # Disable for CPU tests
+    project: minllm-smoke
+    entity: null
+    group: smoke-tests-cpu
+    name: gpt2-smoke-cpu
+    tags: ["smoke", "gpt2", "cpu", "fineweb"]
+    log_artifacts: false
+    rank_zero_only: true
+    log_interval: 10

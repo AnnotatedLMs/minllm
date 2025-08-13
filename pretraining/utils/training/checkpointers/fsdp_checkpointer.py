@@ -204,17 +204,24 @@ class FSDPCheckpointer(base_checkpointer.BaseCheckpointer):
             )
 
         # Load sharded state dicts
-        sharded_model_state = torch.load(model_path, map_location=device)
-        sharded_optimizer_state = torch.load(optim_path, map_location=device)
+        # Use weights_only=False for backward compatibility with PyTorch 2.6+
+        sharded_model_state = torch.load(model_path, map_location=device, weights_only=False)
+        sharded_optimizer_state = torch.load(optim_path, map_location=device, weights_only=False)
 
         # Load non-sharded components (from rank 0's save)
         scheduler_path = checkpoint_dir / "scheduler.pt"
         train_path = checkpoint_dir / "train.pt"
 
         scheduler_state = (
-            torch.load(scheduler_path, map_location=device) if scheduler_path.exists() else {}
+            torch.load(scheduler_path, map_location=device, weights_only=False)
+            if scheduler_path.exists()
+            else {}
         )
-        training_state = torch.load(train_path, map_location=device) if train_path.exists() else {}
+        training_state = (
+            torch.load(train_path, map_location=device, weights_only=False)
+            if train_path.exists()
+            else {}
+        )
 
         # Create CheckpointData with raw dicts
         ckpt_data = checkpoint_data.CheckpointData(

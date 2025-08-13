@@ -1,0 +1,136 @@
+# GPT-2 Smoke Test Configuration
+# Tests basic functionality with reasonable token budget for FineWeb data
+
+model:
+  vocab_size: 50257  # Standard GPT-2 vocab
+
+  # Weight initialization
+  weight_init:
+    std: 0.02
+    residual_pattern: 'c_proj.weight'
+    position_init_std: 0.02
+
+  # Token embeddings
+  token_embedding:
+    embedding_dim: 768
+    init_std: 0.02
+
+  # Position embeddings
+  position_embedding:
+    max_position_embeddings: 1024
+    embedding_dim: 768
+    init_std: 0.02
+
+  # Transformer backbone
+  transformer:
+    hidden_dim: 768
+    n_layers: 6  # Small model
+    block_size: 1024
+    dropout: 0.1
+    bias: true
+
+    # Layer normalization
+    normalization:
+      norm_eps: 0.00001
+      bias: true
+
+    # Multi-head attention
+    attention:
+      num_heads: 12
+      bias: true
+      max_seq_length: 1024
+      is_causal: true
+      use_flash_attention: false
+
+    # Feed-forward network
+    ffn:
+      intermediate_dim: 3072  # 4 * hidden_dim
+      activation: gelu
+      bias: true
+
+  # Output head
+  output_head:
+    tie_word_embeddings: true
+    lm_head_bias: false
+
+# Training configuration
+training:
+  # ~10M tokens for smoke test (reasonable for testing full pipeline)
+  token_budget: 10485760  # 10M tokens
+  max_iters: 10000  # Safety limit
+  seed: 1337
+  gradient_accumulation_steps: 4
+  precision: bf16
+
+  # Data configuration
+  data:
+    dataset: fineweb
+    data_dir: ./data/fineweb
+    num_workers: 4
+    pin_memory: true
+
+  # Batch configuration
+  batch:
+    batch_size: 8
+    sequence_length: 1024
+
+  # Optimizer configuration
+  optimizer:
+    optimizer_type: adamw
+    learning_rate: 0.0006
+    weight_decay: 0.1
+    beta1: 0.9
+    beta2: 0.95
+    grad_clip: 1.0
+    eps: 0.00000001
+    parameter_grouping: dimension
+
+  # Learning rate schedule
+  lr_schedule:
+    schedule_type: cosine
+    warmup_iters: 100
+    lr_decay_iters: 1280  # ~10M tokens / (8 batch * 1024 seq)
+    min_lr: 0.00006
+
+  # Loss configuration
+  loss:
+    cross_entropy_weight: 1.0
+
+  # Evaluation configuration
+  evaluation:
+    eval_interval: 100  # Every 100 steps (~819K tokens)
+    eval_iters: 10
+    num_eval_batches: 50
+
+  # Checkpointing configuration
+  checkpoint:
+    save_dir: ./checkpoints/smoke/gpt2
+    save_interval: 500  # Every 500 steps (~4M tokens)
+    save_best: true
+    keep_last_n: 2
+
+  # Logging configuration
+  log_interval: 10  # Log every 10 steps
+
+  # Torch compilation
+  torch_compilation:
+    compile: true
+    compile_mode: default
+
+  # Execution configuration
+  execution:
+    strategy: single
+    single:
+      device: cuda
+
+  # Weights & Biases logging
+  wandb_logging:
+    enabled: true
+    project: minllm-smoke
+    entity: null  # Unneeded if logged in
+    group: smoke-tests
+    name: gpt2-smoke
+    tags: ["smoke", "gpt2", "fineweb"]
+    log_artifacts: true
+    rank_zero_only: true
+    log_interval: 10

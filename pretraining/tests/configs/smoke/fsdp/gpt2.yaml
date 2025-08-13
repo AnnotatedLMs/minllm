@@ -1,0 +1,136 @@
+# FSDP Multi-GPU Integration Test
+# Tests distributed training with FSDP
+
+model:
+  vocab_size: 50257
+
+  # Token embeddings
+  token_embedding:
+    embedding_dim: 1024
+    init_std: 0.02
+
+  # Position embeddings (GPT-2 style)
+  position_embedding:
+    max_position_embeddings: 2048
+    embedding_dim: 1024
+    init_std: 0.02
+
+  # Transformer backbone
+  transformer:
+    hidden_dim: 1024
+    n_layers: 12  # Medium model for integration test
+    block_size: 2048
+    dropout: 0.1
+    bias: true
+
+    # Layer normalization
+    normalization:
+      norm_eps: 0.00001
+      bias: true
+
+    # Multi-head attention
+    attention:
+      num_heads: 16
+      bias: true
+      max_seq_length: 2048
+      is_causal: true
+      use_flash_attention: true  # Test flash attention
+
+    # Feed-forward network
+    ffn:
+      intermediate_dim: 4096
+      activation: gelu
+      bias: true
+
+  # Output head
+  output_head:
+    tie_word_embeddings: true
+    lm_head_bias: false
+
+# Training configuration
+training:
+  # ~50M tokens for integration test
+  token_budget: 52428800  # 50M tokens
+  max_iters: 20000
+  seed: 1337
+  gradient_accumulation_steps: 2
+  precision: bf16
+
+  # Data configuration
+  data:
+    dataset: fineweb
+    data_dir: ./data/fineweb
+    num_workers: 8
+    pin_memory: true
+
+  # Batch configuration
+  batch:
+    batch_size: 4  # Per GPU
+    sequence_length: 2048
+
+  # Optimizer configuration
+  optimizer:
+    optimizer_type: adamw
+    learning_rate: 0.0003
+    weight_decay: 0.1
+    beta1: 0.9
+    beta2: 0.999
+    grad_clip: 1.0
+    eps: 0.00000001
+    parameter_grouping: dimension
+
+  # Learning rate schedule
+  lr_schedule:
+    schedule_type: cosine
+    warmup_iters: 500
+    lr_decay_iters: 6400  # 50M / (4 * 2 GPUs * 2048)
+    min_lr: 0.00003
+
+  # Loss configuration
+  loss:
+    cross_entropy_weight: 1.0
+
+  # Evaluation configuration
+  evaluation:
+    eval_interval: 200  # Every ~3.2M tokens
+    eval_iters: 20
+    num_eval_batches: 100
+
+  # Checkpointing configuration
+  checkpoint:
+    save_dir: ./checkpoints/integration/fsdp
+    save_interval: 1000  # Every ~16M tokens
+    save_best: true
+    keep_last_n: 3
+
+  # Logging configuration
+  log_interval: 20
+
+  # Torch compilation
+  torch_compilation:
+    compile: true
+    compile_mode: default
+
+  # Execution configuration (FSDP)
+  execution:
+    strategy: fsdp
+    fsdp:
+      sharding_strategy: full_shard
+      mixed_precision: true
+      activation_checkpointing: true
+      cpu_offload: false
+      backward_prefetch: backward_pre
+      forward_prefetch: true
+      limit_all_gathers: true
+
+  # Weights & Biases logging
+  wandb_logging:
+    enabled: true
+    project: minllm-integration
+    entity: null
+    group: integration-fsdp
+    name: fsdp-multi-gpu
+    tags: ["integration", "fsdp", "multi-gpu"]
+    log_artifacts: true
+    rank_zero_only: true
+    log_interval: 20

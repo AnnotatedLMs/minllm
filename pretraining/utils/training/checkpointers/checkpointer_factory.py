@@ -1,6 +1,7 @@
 """Factory functions for building checkpointers on-demand."""
 
 # Standard Library
+import pathlib
 import typing
 
 # Third Party
@@ -41,3 +42,24 @@ def build_checkpointer(
     else:
         # For SINGLE and DDP strategies, use the standard checkpointer
         return core_checkpointer.Checkpointer(config)
+
+
+def should_resume_training(
+    checkpoint_config: checkpointer_configs.CheckpointerConfig,
+) -> typing.Tuple[bool, typing.Optional[str]]:
+    """Check if training should resume from a checkpoint.
+
+    Args:
+        checkpoint_config: Checkpoint configuration
+
+    Returns:
+        Tuple of (should_resume, resume_path_or_none)
+    """
+    if checkpoint_config.resume_from:
+        resume_path = pathlib.Path(checkpoint_config.resume_from)
+        if not resume_path.exists():
+            raise FileNotFoundError(
+                f"Checkpoint specified in resume_from does not exist: {resume_path}"
+            )
+        return True, str(resume_path)
+    return False, None

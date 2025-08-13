@@ -1,7 +1,6 @@
 # Standard Library
 import argparse
 import os
-import pathlib
 
 # Third Party
 import torch
@@ -24,6 +23,7 @@ from pretraining.utils.training import loss
 from pretraining.utils.training import lr_scheduler
 from pretraining.utils.training import model_wrapper
 from pretraining.utils.training import optimizer
+from pretraining.utils.training.checkpointers import checkpointer_factory
 
 
 def main(trainer_config: core.TrainerConfig) -> None:
@@ -157,18 +157,19 @@ def main(trainer_config: core.TrainerConfig) -> None:
     trainer.setup()
 
     # Try to load checkpoint if resuming
-    if trainer_config.training.checkpoint.resume_from or (
-        trainer_config.training.checkpoint.save_dir
-        and pathlib.Path(trainer_config.training.checkpoint.save_dir).exists()
-    ):
+    should_resume, resume_path = checkpointer_factory.should_resume_training(
+        trainer_config.training.checkpoint
+    )
+    if should_resume:
+        log.info(f"Attempting to resume from {resume_path}")
         if trainer.load_checkpoint():
-            log.info(f"Resumed from iteration {trainer.state.iteration}")
+            log.info(f"Successfully resumed from iteration {trainer.state.iteration}")
             # Update start_index and epoch from loaded state
             if hasattr(trainer.state, "training_state"):
                 start_index = trainer.state.training_state.get("tokens_seen", 0)
                 epoch = trainer.state.training_state.get("epoch", 0)
         else:
-            log.info("No checkpoint found, starting from scratch")
+            log.warning(f"Failed to load checkpoint from {resume_path}, starting from scratch")
 
     # Synchronize all ranks before starting training
     dist_utils.barrier()
@@ -198,7 +199,13 @@ def main(trainer_config: core.TrainerConfig) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train GPT-2 model")
-    parser.add_argument("config", type=str, help="Path to YAML config file")
+    parser.add_argument(
+        "config",
+        type=str,
+        nargs="?",
+        default="pretraining/configs/examples/debug/gpt2_debug_cpu.yaml",
+        help="Path to YAML config file (defaults to debug config)",
+    )
     args = parser.parse_args()
 
     trainer_config = loader.load_training_config(args.config, gpt.GPT2Config)

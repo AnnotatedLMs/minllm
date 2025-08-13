@@ -1,7 +1,7 @@
 # DeepSeek-V3 Debug Configuration (Tiny model for testing)
 
 model:
-  vocab_size: 1000  # Tiny vocab
+  vocab_size: 50257  # GPT-2 vocab for FineWeb
 
   # Token embeddings
   token_embedding:
@@ -70,8 +70,8 @@ training:
 
   # Data configuration
   data:
-    dataset: debug
-    data_dir: ./data/debug
+    dataset: fineweb10B
+    data_dir: ./pretraining/data/sample/fineweb10B
     num_workers: 1
     pin_memory: false
 
@@ -125,11 +125,11 @@ training:
   execution:
     strategy: single
     single:
-      device: cuda  # Use single GPU
+      device: cpu  # Use CPU for debug
 
   # Weights & Biases logging
   wandb_logging:
-    enabled: false
+    enabled: true
     project: minllm-debug
     entity: null  # Set your W&B entity/username
     group: null

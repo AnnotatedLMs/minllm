@@ -1,0 +1,139 @@
+# GPT-2 DDP (Data Parallel) Multi-GPU Smoke Test
+# Tests distributed data parallel training
+
+model:
+  vocab_size: 50257
+
+  # Weight initialization
+  weight_init:
+    std: 0.02
+    residual_pattern: 'c_proj.weight'
+    position_init_std: 0.02
+
+  # Token embeddings
+  token_embedding:
+    embedding_dim: 768
+    init_std: 0.02
+
+  # Position embeddings
+  position_embedding:
+    max_position_embeddings: 1024
+    embedding_dim: 768
+    init_std: 0.02
+
+  # Transformer backbone
+  transformer:
+    hidden_dim: 768
+    n_layers: 8
+    block_size: 1024
+    dropout: 0.1
+    bias: true
+
+    # Layer normalization
+    normalization:
+      norm_eps: 0.00001
+      bias: true
+
+    # Multi-head attention
+    attention:
+      num_heads: 12
+      bias: true
+      max_seq_length: 1024
+      is_causal: true
+      use_flash_attention: true
+
+    # Feed-forward network
+    ffn:
+      intermediate_dim: 3072
+      activation: gelu
+      bias: true
+
+  # Output head
+  output_head:
+    tie_word_embeddings: true
+    lm_head_bias: false
+
+# Training configuration
+training:
+  # ~20M tokens for DDP smoke test
+  token_budget: 20971520
+  max_iters: 10000
+  seed: 1337
+  gradient_accumulation_steps: 2
+  precision: bf16
+
+  # Data configuration
+  data:
+    dataset: fineweb
+    data_dir: ./data/fineweb
+    num_workers: 8
+    pin_memory: true
+
+  # Batch configuration
+  batch:
+    batch_size: 8  # Per GPU
+    sequence_length: 1024
+
+  # Optimizer configuration
+  optimizer:
+    optimizer_type: adamw
+    learning_rate: 0.0004
+    weight_decay: 0.1
+    beta1: 0.9
+    beta2: 0.95
+    grad_clip: 1.0
+    eps: 0.00000001
+    parameter_grouping: dimension
+
+  # Learning rate schedule
+  lr_schedule:
+    schedule_type: cosine
+    warmup_iters: 200
+    lr_decay_iters: 2560  # Adjusted for DDP
+    min_lr: 0.00004
+
+  # Loss configuration
+  loss:
+    cross_entropy_weight: 1.0
+
+  # Evaluation configuration
+  evaluation:
+    eval_interval: 200
+    eval_iters: 20
+    num_eval_batches: 100
+
+  # Checkpointing configuration
+  checkpoint:
+    save_dir: ./checkpoints/smoke/ddp/gpt2
+    save_interval: 1000
+    save_best: true
+    keep_last_n: 3
+
+  # Logging configuration
+  log_interval: 20
+
+  # Torch compilation
+  torch_compilation:
+    compile: true
+    compile_mode: default
+
+  # Execution configuration (DDP)
+  execution:
+    strategy: ddp
+    ddp:
+      backend: nccl  # Use NCCL for NVIDIA GPUs
+      find_unused_parameters: false
+      gradient_as_bucket_view: true
+      static_graph: true
+
+  # Weights & Biases logging
+  wandb_logging:
+    enabled: true
+    project: minllm-smoke
+    entity: null
+    group: smoke-ddp
+    name: gpt2-ddp
+    tags: ["smoke", "gpt2", "ddp", "multi-gpu"]
+    log_artifacts: true
+    rank_zero_only: true  # Only log from rank 0 in DDP
+    log_interval: 20

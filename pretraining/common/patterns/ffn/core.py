@@ -6,6 +6,7 @@ from torch import nn
 
 # Project
 from pretraining.common.base import ffn
+from pretraining.common.patterns.ffn import activations
 
 
 class FeedForward(ffn.BaseFeedForward):
@@ -40,11 +41,12 @@ class FeedForward(ffn.BaseFeedForward):
 
     def _get_activation(self, activation: str) -> nn.Module:
         """Get activation function by name."""
-        activations = {
+        activation_map = {
             "gelu": nn.GELU(),
             "relu": nn.ReLU(),
             "silu": nn.SiLU(),  # Also known as swish
+            "relu_squared": activations.ReLUSquared(),  # https://arxiv.org/abs/2109.08668v2; ~1-2% better than GELU; suggested by @SKYLINEZ007 and @Grad62304977
         }
-        if activation not in activations:
+        if activation not in activation_map:
             raise ValueError(f"Unknown activation: {activation}")
-        return activations[activation]
+        return activation_map[activation]

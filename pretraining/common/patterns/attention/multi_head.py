@@ -36,8 +36,11 @@ class MultiHeadAttention(core.Attention):
         max_seq_length: int = 1024,
         is_causal: bool = True,
         use_flash_attention: bool = True,
+        attention_scale: typing.Optional[float] = None,
     ):
-        super().__init__(hidden_dim, num_heads, dropout, is_causal, use_flash_attention)
+        super().__init__(
+            hidden_dim, num_heads, dropout, is_causal, use_flash_attention, attention_scale
+        )
 
         self.max_seq_length = max_seq_length
 
