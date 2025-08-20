@@ -1,3 +1,6 @@
+# Standard Library
+import typing
+
 # Third Party
 import pydantic
 
@@ -6,8 +9,10 @@ from pretraining.configs import base
 from pretraining.configs.model.architectures import base as base_llm
 from pretraining.configs.training import trainer_configs
 
+ModelConfigT = typing.TypeVar("ModelConfigT", bound=base_llm.BaseLLMConfig)
 
-class TrainerConfig(base.BaseConfig):
+
+class TrainerConfig(base.BaseConfig, typing.Generic[ModelConfigT]):
     """
     Root configuration that combines model and training configurations.
 
@@ -19,7 +24,7 @@ class TrainerConfig(base.BaseConfig):
     """
 
     # 1. Model configuration (defines the LLM architecture)
-    llm: base_llm.BaseLLMConfig
+    llm: ModelConfigT
 
     # 2. Training configuration (defines the training process)
     training: trainer_configs.TrainingLoopConfig

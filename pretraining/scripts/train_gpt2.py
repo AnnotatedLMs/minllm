@@ -4,9 +4,10 @@ import os
 
 # Third Party
 import torch
+from packaging import version
 
 # Project
-from pretraining.common.patterns.architectures import gpt2
+from pretraining.common.models.architectures import gpt2
 from pretraining.configs import core
 from pretraining.configs import loader
 from pretraining.configs.model.architectures import gpt
@@ -26,7 +27,7 @@ from pretraining.utils.training import optimizer
 from pretraining.utils.training.checkpointers import checkpointer_factory
 
 
-def main(trainer_config: core.TrainerConfig) -> None:
+def main(trainer_config: core.TrainerConfig[gpt.GPT2Config]) -> None:
     """Main training function that runs after distributed setup."""
 
     device = trainer_config.training.execution.setup_device()
@@ -60,10 +61,7 @@ def main(trainer_config: core.TrainerConfig) -> None:
     if trainer_config.training.execution.strategy == execution_configs.ExecutionStrategy.DDP:
         model.reset_parameters()
     elif trainer_config.training.execution.strategy == execution_configs.ExecutionStrategy.FSDP:
-        # Third Party
-        import packaging.version
-
-        if packaging.version.parse(torch.__version__) >= packaging.version.parse("2.1.0"):
+        if version.parse(torch.__version__) >= version.parse("2.1.0"):
             model.reset_parameters()
 
     optim = optimizer.OptimizerFactory.create_from_config(

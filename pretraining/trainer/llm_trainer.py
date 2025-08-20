@@ -3,6 +3,7 @@ import pathlib
 import shutil
 import time
 import typing
+from datetime import datetime
 
 # Third Party
 import torch
@@ -12,7 +13,7 @@ from torch.distributed import fsdp
 from torch.nn import parallel
 
 # Project
-from pretraining.common.base import inputs
+from pretraining.common.models import inputs
 from pretraining.configs import core
 from pretraining.configs.training import execution_configs
 from pretraining.configs.training import precision_configs
@@ -26,6 +27,8 @@ from pretraining.utils.training import state
 from pretraining.utils.training.checkpointers import checkpointer_factory
 
 
+# TODO: Update dataloader for new sequence length
+# This will be implemented when we handle the dataloader updates
 class LLMTrainer:
     """Trainer for Large Language Model pretraining.
 
@@ -81,7 +84,7 @@ class LLMTrainer:
         self.model = model
         self.dist_model = dist_model
         self.config = config
-        self.training_config = config.training  # For easy access to training config
+        self.training_config = config.training
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.loss_handler = loss_handler
@@ -116,30 +119,21 @@ class LLMTrainer:
 
         self.num_params = sum(p.numel() for p in self.model.parameters())
 
-        # Apply torch.compile if configured
         if self.training_config.torch_compilation.compile:
             compile_mode = self.training_config.torch_compilation.compile_mode or "default"
-            self.logger.info(f"Compiling model with torch.compile (mode={compile_mode})")
             self.model = torch.compile(self.model, mode=compile_mode, dynamic=False)
 
-        # Initialize wandb if enabled
         if self.training_config.wandb_logging.enabled and (
             not self.training_config.wandb_logging.rank_zero_only or self.is_main_process
         ):
-            # Create wandb directory
             wandb_dir = pathlib.Path(self.training_config.checkpoint.save_dir) / "wandb"
             wandb_dir.mkdir(parents=True, exist_ok=True)
 
-            # Add timestamp to run name if provided
             run_name = self.training_config.wandb_logging.name
             if run_name:
-                # Standard Library
-                from datetime import datetime
-
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 run_name = f"{run_name}_{timestamp}"
 
-            # Initialize wandb
             wandb.init(
                 dir=str(wandb_dir),
                 project=self.training_config.wandb_logging.project,
@@ -150,7 +144,6 @@ class LLMTrainer:
                 config=self.config.model_dump(),  # Convert full config to dict
             )
 
-            # Log model info
             wandb.config.update(
                 {
                     "num_parameters": self.num_params,
@@ -579,6 +572,24 @@ class LLMTrainer:
             if old_checkpoint.exists() and self.is_main_process:
                 self.logger.info(f"Removing old checkpoint: {old_checkpoint}")
                 shutil.rmtree(old_checkpoint)
+
+                # Update latest symlink if we deleted what it points to
+                latest_link = pathlib.Path(self.training_config.checkpoint.save_dir) / "latest"
+                if latest_link.is_symlink():
+                    # Check if symlink points to the checkpoint we just deleted
+                    try:
+                        if latest_link.resolve() == old_checkpoint.resolve():
+                            # Update to point to the most recent checkpoint
+                            latest_link.unlink()
+                            if self.checkpoints:  # If we still have checkpoints
+                                latest_checkpoint = self.checkpoints[-1]
+                                latest_link.symlink_to(latest_checkpoint.name)
+                                self.logger.info(
+                                    f"Updated latest symlink to {latest_checkpoint.name}"
+                                )
+                    except (OSError, ValueError):
+                        # Symlink might be broken, ignore
+                        pass
 
             # Sync after removal
             dist_utils.barrier()

@@ -43,9 +43,12 @@ model:
     moe:
       num_experts: 8  # Reasonable number for smoke test
       num_experts_per_token: 2  # Top-2 routing
-      expert_intermediate_dim: 2048  # ~2.7x hidden_dim
+      intermediate_dim: 2048  # ~2.7x hidden_dim
+      activation: silu
       shared_expert_ratio: 0.1
+      n_shared_experts: 2
       bias_update_speed: 0.001
+      aux_loss_alpha: 0.001  # Extremely small factor for auxiliary loss (DeepSeek-V3 paper)
       gate_noise_scale: 0.01
 
   # Output head
@@ -57,7 +60,7 @@ model:
   mtp:
     n_predict: 2  # Predict 2 future tokens
     prediction_depth: 1
-    dropout_rate: 0.1
+    dropout: 0.1
 
 # Training configuration
 training:

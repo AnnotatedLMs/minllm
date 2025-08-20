@@ -7,7 +7,7 @@ model:
   # Weight initialization
   weight_init:
     std: 0.02
-    residual_pattern: 'c_proj.weight'
+    residual_pattern: 'down_proj.weight'
     position_init_std: 0.02
 
   # Token embeddings

@@ -31,11 +31,16 @@ class MoEConfig(base.BaseConfig):
     num_experts_per_token: int  # top-k experts per token
 
     # Expert configuration
-    expert_intermediate_dim: typing.Optional[int] = None  # If None, uses FFNConfig
+    intermediate_dim: typing.Optional[int] = None  # Expert FFN intermediate dimension
+    activation: typing.Literal["gelu", "relu", "silu", "swish"] = "silu"  # Expert activation
 
-    # Aux-loss-free MoE specific (DeepSeek-V3)
+    # Shared expert configuration (DeepSeek-V3 specific)
     shared_expert_ratio: float = 0.1  # Fraction of capacity for shared expert
+    n_shared_experts: int = 2  # Number of shared expert "units" (multiplies intermediate_dim)
+
+    # Load balancing (Aux-loss-free MoE specific)
     bias_update_speed: float = 0.001  # Speed of load balancing bias updates
+    aux_loss_alpha: float = 0.001  # Extremely small alpha factor for auxiliary loss (DeepSeek-V3)
 
     # Gating configuration
     gate_noise_scale: float = 0.01  # Exploration noise during training

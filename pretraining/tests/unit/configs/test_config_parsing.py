@@ -32,7 +32,7 @@ class TestConfigParsing:
 
     def test_parse_gpt2_config(self, example_configs_dir):
         """Test parsing GPT-2 configuration."""
-        config_path = example_configs_dir / "gpt2" / "gpt2_debug_cpu.yaml"
+        config_path = example_configs_dir / "gpt2_debug_cpu.yaml"
         config = loader.load_training_config(config_path, gpt.GPT2Config)
 
         # Check it parsed to correct type
@@ -46,7 +46,7 @@ class TestConfigParsing:
         # Check weight init
         assert isinstance(config.llm.weight_init, initialization.GPT2InitConfig)
         assert config.llm.weight_init.std == 0.02
-        assert config.llm.weight_init.residual_pattern == "c_proj.weight"
+        assert config.llm.weight_init.residual_pattern == "down_proj.weight"
 
         # Check position embeddings exist
         assert config.llm.position_embedding is not None
@@ -59,7 +59,7 @@ class TestConfigParsing:
 
     def test_parse_llama_config(self, example_configs_dir):
         """Test parsing Llama 3.1 configuration."""
-        config_path = example_configs_dir / "llama3" / "llama3_debug_cpu.yaml"
+        config_path = example_configs_dir / "llama3_debug_cpu.yaml"
         config = loader.load_training_config(config_path, llama.Llama3Config)
 
         # Check it parsed to correct type
@@ -68,7 +68,7 @@ class TestConfigParsing:
         # Check model dimensions
         assert config.llm.transformer.hidden_dim == 64
         assert config.llm.transformer.n_layers == 2
-        assert config.llm.vocab_size == 1000
+        assert config.llm.vocab_size == 50257  # GPT-2 vocab for FineWeb
 
         # Check weight init (Llama uses default, so None)
         assert config.llm.weight_init is None
@@ -87,7 +87,7 @@ class TestConfigParsing:
 
     def test_parse_deepseek_config(self, example_configs_dir):
         """Test parsing DeepSeek3 configuration."""
-        config_path = example_configs_dir / "deepseek3" / "deepseek3_debug_cpu.yaml"
+        config_path = example_configs_dir / "deepseek3_debug_cpu.yaml"
         config = loader.load_training_config(config_path, deepseek.DeepSeek3Config)
 
         # Check it parsed to correct type
@@ -121,9 +121,9 @@ class TestConfigParsing:
         """Test that configs are properly validated."""
         # All debug configs should load without errors
         configs = [
-            ("gpt2/gpt2_debug_cpu.yaml", gpt.GPT2Config),
-            ("llama3/llama3_debug_cpu.yaml", llama.Llama3Config),
-            ("deepseek3/deepseek3_debug_cpu.yaml", deepseek.DeepSeek3Config),
+            ("gpt2_debug_cpu.yaml", gpt.GPT2Config),
+            ("llama3_debug_cpu.yaml", llama.Llama3Config),
+            ("deepseek3_debug_cpu.yaml", deepseek.DeepSeek3Config),
         ]
 
         for yaml_file, config_class in configs:
@@ -140,7 +140,7 @@ class TestConfigParsing:
 
     def test_config_round_trip(self, example_configs_dir):
         """Test that configs can be serialized and deserialized."""
-        config_path = example_configs_dir / "gpt2" / "gpt2_debug_cpu.yaml"
+        config_path = example_configs_dir / "gpt2_debug_cpu.yaml"
         config = loader.load_training_config(config_path, gpt.GPT2Config)
 
         # Convert to dict and back

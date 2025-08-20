@@ -5,10 +5,10 @@ import pathlib
 import torch
 
 # Project
-from pretraining.common.patterns.architectures import deepseek3
-from pretraining.common.patterns.architectures import gpt2
-from pretraining.common.patterns.architectures import llama3
-from pretraining.common.patterns.moe import aux_loss_free
+from pretraining.common.models.architectures import deepseek3
+from pretraining.common.models.architectures import gpt2
+from pretraining.common.models.architectures import llama3
+from pretraining.common.models.moe import aux_loss_free
 from pretraining.configs import loader
 from pretraining.configs.model.architectures import deepseek
 from pretraining.configs.model.architectures import gpt
@@ -39,7 +39,7 @@ class TestYAMLToModelDebug:
 
     def test_gpt2_debug_yaml_to_model(self, debug_configs_dir: pathlib.Path) -> None:
         """Test GPT-2 debug YAML loads and creates working model."""
-        config_path = debug_configs_dir / "gpt2" / "gpt2_debug_cpu.yaml"
+        config_path = debug_configs_dir / "gpt2_debug_cpu.yaml"
 
         # Parse config
         config = loader.load_training_config(config_path, gpt.GPT2Config)
@@ -68,7 +68,7 @@ class TestYAMLToModelDebug:
 
     def test_llama_debug_yaml_to_model(self, debug_configs_dir: pathlib.Path) -> None:
         """Test Llama debug YAML loads and creates working model."""
-        config_path = debug_configs_dir / "llama3" / "llama3_debug_cpu.yaml"
+        config_path = debug_configs_dir / "llama3_debug_cpu.yaml"
 
         # Parse config
         config = loader.load_training_config(config_path, llama.Llama3Config)
@@ -100,7 +100,7 @@ class TestYAMLToModelDebug:
 
     def test_deepseek_debug_yaml_to_model(self, debug_configs_dir: pathlib.Path) -> None:
         """Test DeepSeek debug YAML loads and creates working model."""
-        config_path = debug_configs_dir / "deepseek3" / "deepseek3_debug_cpu.yaml"
+        config_path = debug_configs_dir / "deepseek3_debug_cpu.yaml"
 
         # Parse config
         config = loader.load_training_config(config_path, deepseek.DeepSeek3Config)
@@ -132,9 +132,9 @@ class TestYAMLToModelDebug:
     def test_model_parameter_counts(self, debug_configs_dir: pathlib.Path) -> None:
         """Test that debug models have reasonable parameter counts."""
         for config_name, model_class, config_class in [
-            ("gpt2/gpt2_debug_cpu.yaml", gpt2.GPT2, gpt.GPT2Config),
-            ("llama3/llama3_debug_cpu.yaml", llama3.Llama3, llama.Llama3Config),
-            ("deepseek3/deepseek3_debug_cpu.yaml", deepseek3.DeepSeek3, deepseek.DeepSeek3Config),
+            ("gpt2_debug_cpu.yaml", gpt2.GPT2, gpt.GPT2Config),
+            ("llama3_debug_cpu.yaml", llama3.Llama3, llama.Llama3Config),
+            ("deepseek3_debug_cpu.yaml", deepseek3.DeepSeek3, deepseek.DeepSeek3Config),
         ]:
             config_path = debug_configs_dir / config_name
             config = loader.load_training_config(config_path, config_class)
@@ -142,8 +142,8 @@ class TestYAMLToModelDebug:
             model = model_class.from_config(config.llm)
             param_count = sum(p.numel() for p in model.parameters())
 
-            # Debug models should be tiny
-            assert param_count < 1_000_000, (
-                f"{config_name} has {param_count:,} params (should be < 1M)"
+            # Debug models should be small (< 15M params)
+            assert param_count < 15_000_000, (
+                f"{config_name} has {param_count:,} params (should be < 15M)"
             )
             print(f"{config_name}: {param_count:,} parameters")

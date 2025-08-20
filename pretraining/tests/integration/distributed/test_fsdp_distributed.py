@@ -7,9 +7,9 @@ import torch.distributed as dist
 from torch.distributed import fsdp
 
 # Project
-from pretraining.common.patterns.architectures import deepseek3
-from pretraining.common.patterns.architectures import gpt2
-from pretraining.common.patterns.architectures import llama3
+from pretraining.common.models.architectures import deepseek3
+from pretraining.common.models.architectures import gpt2
+from pretraining.common.models.architectures import llama3
 from pretraining.configs import loader
 from pretraining.configs.model.architectures import deepseek
 from pretraining.configs.model.architectures import gpt

@@ -5,7 +5,7 @@ import unittest
 import torch
 
 # Project
-from pretraining.common.patterns.architectures import gpt2
+from pretraining.common.models.architectures import gpt2
 from pretraining.configs import loader
 from pretraining.configs.model.architectures import gpt
 from pretraining.trainer import llm_trainer
@@ -40,7 +40,7 @@ class TestCPUTraining(unittest.TestCase):
     def setUp(self):
         """Set up test configuration."""
         # Load GPT-2 CPU debug config
-        config_path = "pretraining/configs/examples/debug/gpt2/gpt2_debug_cpu.yaml"
+        config_path = "pretraining/configs/examples/debug/gpt2_debug_cpu.yaml"
         self.trainer_config = loader.load_training_config(config_path, gpt.GPT2Config)
         self.model_config = self.trainer_config.llm
         self.training_config = self.trainer_config.training

@@ -59,10 +59,12 @@ class Llama3Config(base.BaseLLMConfig):
             trans_dict["attention"]
         )
 
-        # Parse RoPE config with optional scaling
+        # Parse RoPE config with optional linear scaling
         rope_dict = trans_dict["rope"]
-        if "scaling" in rope_dict and rope_dict["scaling"] is not None:
-            rope_dict["scaling"] = position.RoPEScalingConfig.model_validate(rope_dict["scaling"])
+        if "linear_scaling" in rope_dict and rope_dict["linear_scaling"] is not None:
+            rope_dict["linear_scaling"] = position.LinearRoPEScalingConfig.model_validate(
+                rope_dict["linear_scaling"]
+            )
         trans_dict["rope"] = position.RoPEConfig.model_validate(rope_dict)
 
         # Create Llama3TransformerConfig

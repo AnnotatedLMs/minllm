@@ -7,7 +7,7 @@ class MultiTokenPredictionConfig(base.BaseConfig):
 
     n_predict: int = 3  # Number of future tokens to predict
     prediction_depth: int = 1  # Number of layers in prediction head
-    dropout_rate: float = 0.1  # Dropout in prediction head
+    dropout: float = 0.1  # Dropout in prediction head
 
 
 class OutputHeadConfig(base.BaseConfig):

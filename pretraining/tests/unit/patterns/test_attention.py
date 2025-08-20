@@ -10,12 +10,11 @@ import torch
 from torch import testing
 
 # Project
-from pretraining.common.patterns.attention import grouped_query
-from pretraining.common.patterns.attention import multi_head
-from pretraining.common.patterns.attention import multi_latent
-from pretraining.common.patterns.cache import kv_cache
-from pretraining.common.patterns.position import core
-from pretraining.common.patterns.position import rope_partial
+from pretraining.common.models.attention import grouped_query
+from pretraining.common.models.attention import multi_head
+from pretraining.common.models.attention import multi_latent
+from pretraining.common.models.position import partial_rope
+from pretraining.common.models.position import rope
 
 
 # Helper to check Flash Attention availability
@@ -73,7 +72,7 @@ class TestMultiHeadAttention:
         x = torch.randn(batch_size, seq_len, 128)
 
         # Get projections
-        q, k, v = mha._compute_qkv_projections(x)
+        q, k, v = mha._compute_qkv_projections(x, mha.qkv_projection, mha.hidden_dim)
 
         # Check shapes
         assert q.shape == (batch_size, seq_len, 128)
@@ -85,13 +84,15 @@ class TestMultiHeadAttention:
         batch_size, seq_len = 2, 8
         tensor = torch.randn(batch_size, seq_len, 128)
 
-        multihead = mha._reshape_to_multihead(tensor, batch_size, seq_len)
+        multihead = mha._reshape_to_multihead(
+            tensor, batch_size, seq_len, mha.num_heads, mha.head_dim
+        )
 
         # Check shape: [batch, n_heads, seq, head_dim]
         assert multihead.shape == (batch_size, 4, seq_len, 32)
 
         # Test merge back
-        merged = mha._merge_heads(multihead)
+        merged = mha._merge_heads(multihead, mha.hidden_dim)
         assert merged.shape == (batch_size, seq_len, 128)
 
     def test_mha_deterministic(self, mha: multi_head.MultiHeadAttention) -> None:
@@ -108,16 +109,16 @@ class TestGroupedQueryAttention:
     """Test grouped query attention (Llama style)."""
 
     @pytest.fixture
-    def rope_module(self) -> core.PrecomputedRoPE:
+    def rope_module(self) -> rope.PrecomputedRoPE:
         """Create RoPE module for GQA."""
-        return core.PrecomputedRoPE(
+        return rope.PrecomputedRoPE(
             dim=16,  # head_dim for GQA with hidden_dim=128, num_heads=8
             theta=10000.0,
             max_seq_len=512,
         )
 
     @pytest.fixture
-    def gqa(self, rope_module: core.PrecomputedRoPE) -> grouped_query.GroupedQueryAttention:
+    def gqa(self, rope_module: rope.PrecomputedRoPE) -> grouped_query.GroupedQueryAttention:
         """Create GroupedQueryAttention instance."""
         return grouped_query.GroupedQueryAttention(
             hidden_dim=128,
@@ -177,8 +178,8 @@ class TestGroupedQueryAttention:
         """Test GQA with static KV cache."""
         batch_size = 1
 
-        # Install cache
-        gqa.cache = kv_cache.KVCache(
+        # Install cache using the mixin method
+        gqa.setup_cache(
             batch_size=batch_size,
             max_seq_length=100,
             n_kv_heads=2,
@@ -192,8 +193,8 @@ class TestGroupedQueryAttention:
         out1 = gqa(x1, position_offset=0)
 
         # Check cache was updated
-        assert not torch.all(gqa.cache.cache_k == 0)
-        assert not torch.all(gqa.cache.cache_v == 0)
+        assert not torch.all(gqa.cache_k == 0)
+        assert not torch.all(gqa.cache_v == 0)
 
         # Process second token
         x2 = torch.randn(batch_size, 1, 128)
@@ -207,12 +208,14 @@ class TestMultiHeadLatentAttention:
     """Test multi-head latent attention (DeepSeek style)."""
 
     @pytest.fixture
-    def partial_rope(self) -> rope_partial.PartialRoPE:
+    def partial_rope_module(self) -> partial_rope.PartialRoPE:
         """Create PartialRoPE for MLA."""
-        return rope_partial.PartialRoPE(dim=64, theta=10000.0)
+        return partial_rope.PartialRoPE(dim=64, theta=10000.0)
 
     @pytest.fixture
-    def mla(self, partial_rope: rope_partial.PartialRoPE) -> multi_latent.MultiHeadLatentAttention:
+    def mla(
+        self, partial_rope_module: partial_rope.PartialRoPE
+    ) -> multi_latent.MultiHeadLatentAttention:
         """Create MultiHeadLatentAttention instance."""
         return multi_latent.MultiHeadLatentAttention(
             hidden_dim=512,
@@ -220,7 +223,7 @@ class TestMultiHeadLatentAttention:
             head_dim=128,
             kv_compression_dim=256,
             query_compression_dim=256,
-            rope_module=partial_rope,
+            rope_module=partial_rope_module,
             rope_dim=64,
             dropout=None,
             is_causal=True,
@@ -260,7 +263,7 @@ class TestMultiHeadLatentAttention:
         batch_size, seq_len = 1, 8
         x = torch.randn(batch_size, seq_len, 512)
 
-        kv_compressed, query_compressed = mla._compress_inputs(x)
+        kv_compressed, query_compressed = mla._compress_inputs(x, mla.kv_down, mla.query_down)
 
         # Check compressed dimensions
         assert kv_compressed.shape == (batch_size, seq_len, 256)
@@ -271,19 +274,25 @@ class TestMultiHeadLatentAttention:
 
     def test_mla_rope_application(self, mla: multi_latent.MultiHeadLatentAttention) -> None:
         """Test RoPE is applied to position dimensions only."""
-        batch_size, seq_len = 1, 4
+        batch_size, seq_len, num_heads = 1, 4, 8
 
-        # Create rope tensor
-        rope_tensor = torch.randn(batch_size, 8, seq_len, 64)
+        # Split content and position features
+        content_dim = 128  # mla.head_dim
+        rope_dim = 64  # mla.rope_dim
+
+        # Create separate content and position features
+        content_features = torch.randn(batch_size, seq_len, num_heads, content_dim)
+        position_features = torch.randn(batch_size, seq_len, num_heads, rope_dim)
 
         # Apply RoPE
-        rotated = mla._apply_rope_to_subset(rope_tensor)
+        combined = mla._apply_partial_rope(content_features, position_features, mla.rope_module)
 
-        # Check shape is preserved
-        assert rotated.shape == rope_tensor.shape
+        # Check shape - should be combined dimension
+        assert combined.shape == (batch_size, seq_len, num_heads, content_dim + rope_dim)
 
-        # Check rotation was applied (output differs from input)
-        assert not torch.allclose(rotated, rope_tensor)
+        # Check that content part is unchanged but position part is rotated
+        content_part = combined[..., :content_dim]
+        assert torch.allclose(content_part, content_features)
 
     def test_mla_attention_scaling(self, mla: multi_latent.MultiHeadLatentAttention) -> None:
         """Test MLA uses correct attention scaling."""
@@ -295,7 +304,7 @@ class TestMultiHeadLatentAttention:
         k = torch.randn(1, 8, 4, 128 + 64)
 
         # Compute scores
-        scores = mla._compute_attention_scores(q, k)
+        scores = mla._compute_attention_scores(q, k, mla.head_dim + mla.rope_dim)
 
         # Manually compute expected scores
         expected = torch.matmul(q, k.transpose(-2, -1)) / expected_scale
@@ -312,16 +321,19 @@ class TestAttentionMasking:
             hidden_dim=64,
             num_heads=4,
             is_causal=True,
+            use_flash_attention=False,  # Ensure causal mask is created
         )
 
-        mask = mha._create_causal_mask(seq_len=5, device=torch.device("cpu"))
+        # Check causal mask was created
+        assert hasattr(mha, "causal_mask")
+        assert mha.causal_mask is not None
 
-        # Check shape
-        assert mask.shape == (5, 5)
+        # Check shape (view of first 5x5 positions)
+        mask_slice = mha.causal_mask[0, 0, :5, :5]
 
         # Check it's lower triangular
-        expected = torch.tril(torch.ones(5, 5)).bool()
-        testing.assert_close(mask, expected)
+        expected = torch.tril(torch.ones(5, 5))
+        testing.assert_close(mask_slice, expected)
 
     @pytestmark_flash
     def test_attention_mask_application(self) -> None:

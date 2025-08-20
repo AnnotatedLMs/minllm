@@ -4,9 +4,10 @@ import os
 
 # Third Party
 import torch
+from packaging import version
 
 # Project
-from pretraining.common.patterns.architectures import deepseek3
+from pretraining.common.models.architectures import deepseek3
 from pretraining.configs import core
 from pretraining.configs import loader
 from pretraining.configs.model.architectures import deepseek
@@ -26,7 +27,7 @@ from pretraining.utils.training import optimizer
 from pretraining.utils.training.checkpointers import checkpointer_factory
 
 
-def main(trainer_config: core.TrainerConfig) -> None:
+def main(trainer_config: core.TrainerConfig[deepseek.DeepSeek3Config]) -> None:
     """Main training function that runs after distributed setup."""
     device = trainer_config.training.execution.setup_device()
 
@@ -59,10 +60,7 @@ def main(trainer_config: core.TrainerConfig) -> None:
     if trainer_config.training.execution.strategy == execution_configs.ExecutionStrategy.DDP:
         model.reset_parameters()
     elif trainer_config.training.execution.strategy == execution_configs.ExecutionStrategy.FSDP:
-        # Third Party
-        import packaging.version
-
-        if packaging.version.parse(torch.__version__) >= packaging.version.parse("2.1.0"):
+        if version.parse(torch.__version__) >= version.parse("2.1.0"):
             model.reset_parameters()
 
     optim = optimizer.OptimizerFactory.create_from_config(
@@ -141,7 +139,7 @@ def main(trainer_config: core.TrainerConfig) -> None:
     trainer = llm_trainer.LLMTrainer(
         model=model,
         dist_model=dist_model,
-        config=trainer_config,  # Pass full config now
+        config=trainer_config,
         optimizer=optim,
         scheduler=scheduler,
         loss_handler=loss_handler,
@@ -187,11 +185,16 @@ def main(trainer_config: core.TrainerConfig) -> None:
 
     finally:
         # Save final checkpoint
-        if dist_utils.is_main_process():
-            log.info("Saving final checkpoint...")
-        checkpoint_path = trainer.save_checkpoint()
-        if dist_utils.is_main_process():
-            log.info(f"Final checkpoint saved to {checkpoint_path}")
+        # Save final checkpoint only if we haven't just saved at this step
+        if trainer.last_checkpoint_step != trainer.state.iteration:
+            if dist_utils.is_main_process():
+                log.info("Saving final checkpoint...")
+            checkpoint_path = trainer.save_checkpoint()
+            if dist_utils.is_main_process():
+                log.info(f"Final checkpoint saved to {checkpoint_path}")
+        else:
+            if dist_utils.is_main_process():
+                log.info(f"Final checkpoint already saved at step {trainer.state.iteration}")
 
         # Clean up trainer resources (including wandb)
         trainer.cleanup()

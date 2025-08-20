@@ -10,8 +10,8 @@ import torch
 from torch import testing
 
 # Project
-from pretraining.common.patterns.ffn import gated
-from pretraining.common.patterns.ffn import mlp
+from pretraining.common.models.ffn import mlp
+from pretraining.common.models.ffn import swiglu
 
 
 class TestMLP:
@@ -93,9 +93,9 @@ class TestMultiplicativeGatedFFN:
     """Test SwiGLU-style gated feedforward network."""
 
     @pytest.fixture
-    def swiglu(self) -> gated.MultiplicativeGatedFFN:
+    def swiglu_module(self) -> swiglu.SwiGLU:
         """Create SwiGLU FFN."""
-        return gated.MultiplicativeGatedFFN(
+        return swiglu.SwiGLU(
             hidden_dim=128,
             dropout=None,
             activation="silu",
@@ -104,20 +104,20 @@ class TestMultiplicativeGatedFFN:
             multiple_of=64,
         )
 
-    def test_swiglu_dimension_calculation(self, swiglu: gated.MultiplicativeGatedFFN) -> None:
+    def test_swiglu_dimension_calculation(self, swiglu_module: swiglu.SwiGLU) -> None:
         """Test SwiGLU dimension calculation with multiple_of constraint."""
         # Check computed hidden dimension
         # With ffn_dim_multiplier=2.0: 128 * 2.0 = 256
         # Already a multiple of 64, so no rounding needed
         expected_hidden = 256
-        assert swiglu.intermediate_dim == expected_hidden
+        assert swiglu_module.intermediate_dim == expected_hidden
 
-    def test_swiglu_forward(self, swiglu: gated.MultiplicativeGatedFFN) -> None:
+    def test_swiglu_forward(self, swiglu_module: swiglu.SwiGLU) -> None:
         """Test SwiGLU forward pass."""
         batch_size, seq_len = 2, 8
         x = torch.randn(batch_size, seq_len, 128)
 
-        output = swiglu(x)
+        output = swiglu_module(x)
 
         assert output.shape == (batch_size, seq_len, 128)
 
@@ -131,29 +131,29 @@ class TestMultiplicativeGatedFFN:
         ]
 
         for hidden, mult, multiple, expected in test_cases:
-            swiglu = gated.MultiplicativeGatedFFN(
+            swiglu_inst = swiglu.SwiGLU(
                 hidden_dim=hidden,
                 ffn_dim_multiplier=mult,
                 multiple_of=multiple,
             )
-            assert swiglu.intermediate_dim == expected
+            assert swiglu_inst.intermediate_dim == expected
 
-    def test_swiglu_gating_mechanism(self, swiglu: gated.MultiplicativeGatedFFN) -> None:
+    def test_swiglu_gating_mechanism(self, swiglu_module: swiglu.SwiGLU) -> None:
         """Test the gating mechanism works correctly."""
         x = torch.randn(1, 1, 128)
 
         # Get gate and up projections manually
-        gate = swiglu.activation(swiglu.gate_proj(x))
-        up = swiglu.up_proj(x)
+        gate = swiglu_module.activation(swiglu_module.gate_proj(x))
+        up = swiglu_module.up_proj(x)
 
         # Gated activation
         gated = gate * up
 
         # Down projection
-        output_manual = swiglu.down_proj(gated)
+        output_manual = swiglu_module.down_proj(gated)
 
         # Compare with forward pass
-        output_forward = swiglu(x)
+        output_forward = swiglu_module(x)
 
         testing.assert_close(output_manual, output_forward)
 
@@ -162,14 +162,14 @@ class TestMultiplicativeGatedFFN:
         activations = ["silu", "gelu", "relu"]
 
         for act in activations:
-            swiglu = gated.MultiplicativeGatedFFN(
+            swiglu_inst = swiglu.SwiGLU(
                 hidden_dim=64,
                 activation=act,
                 dropout=None,
             )
 
             x = torch.randn(1, 5, 64)
-            output = swiglu(x)
+            output = swiglu_inst(x)
             assert output.shape == x.shape
 
 
@@ -188,7 +188,7 @@ class TestFFNComparison:
         )
 
         # SwiGLU with equivalent capacity
-        swiglu = gated.MultiplicativeGatedFFN(
+        swiglu_inst = swiglu.SwiGLU(
             hidden_dim=hidden_dim,
             ffn_dim_multiplier=2.67,  # Roughly equivalent params
             multiple_of=64,
@@ -196,7 +196,7 @@ class TestFFNComparison:
         )
 
         mlp_params = sum(p.numel() for p in mlp_model.parameters())
-        swiglu_params = sum(p.numel() for p in swiglu.parameters())
+        swiglu_params = sum(p.numel() for p in swiglu_inst.parameters())
 
         # MLP: 256->1024->256 = 256*1024 + 1024*256 = 524,288
         assert mlp_params == 256 * 1024 * 2
@@ -212,10 +212,10 @@ class TestFFNComparison:
         x = torch.randn(1, 10, 128)
 
         mlp_model = mlp.MLP(hidden_dim=128, dropout=None)
-        swiglu = gated.MultiplicativeGatedFFN(hidden_dim=128, dropout=None)
+        swiglu_model = swiglu.SwiGLU(hidden_dim=128, dropout=None)
 
         mlp_out = mlp_model(x)
-        swiglu_out = swiglu(x)
+        swiglu_out = swiglu_model(x)
 
         # Both should maintain roughly similar magnitude to input
         input_norm = torch.norm(x)

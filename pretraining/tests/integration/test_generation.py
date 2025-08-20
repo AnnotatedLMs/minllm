@@ -5,8 +5,8 @@ import pathlib
 import torch
 
 # Project
-from pretraining.common.patterns.architectures import gpt2
-from pretraining.common.patterns.architectures import llama3
+from pretraining.common.models.architectures import gpt2
+from pretraining.common.models.architectures import llama3
 from pretraining.configs import loader
 from pretraining.configs.model.architectures import gpt
 from pretraining.configs.model.architectures import llama
@@ -25,7 +25,7 @@ class TestGeneration:
     def test_gpt2_generation(self, debug_configs_dir: pathlib.Path) -> None:
         """Test GPT2 text generation."""
         # Load config
-        config_path = debug_configs_dir / "gpt2_debug.yaml"
+        config_path = debug_configs_dir / "gpt2_debug_cpu.yaml"
         config = loader.load_training_config(config_path, gpt.GPT2Config)
 
         # Create model
@@ -55,7 +55,7 @@ class TestGeneration:
     def test_llama_generation(self, debug_configs_dir: pathlib.Path) -> None:
         """Test Llama text generation."""
         # Load config
-        config_path = debug_configs_dir / "llama31_debug.yaml"
+        config_path = debug_configs_dir / "llama3_debug_cpu.yaml"
         config = loader.load_training_config(config_path, llama.Llama3Config)
 
         # Create model
@@ -85,7 +85,7 @@ class TestGeneration:
     def test_generation_reproducibility(self, debug_configs_dir: pathlib.Path) -> None:
         """Test that generation is reproducible with same seed."""
         # Load config
-        config_path = debug_configs_dir / "gpt2_debug.yaml"
+        config_path = debug_configs_dir / "gpt2_debug_cpu.yaml"
         config = loader.load_training_config(config_path, gpt.GPT2Config)
 
         # Create model

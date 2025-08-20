@@ -6,13 +6,13 @@ import unittest
 import torch
 
 # Project
-from pretraining.common.patterns.architectures import deepseek3
-from pretraining.common.patterns.architectures import gpt2
-from pretraining.common.patterns.architectures import llama3
-from pretraining.common.patterns.blocks import block_group
-from pretraining.common.patterns.blocks import deepseek3 as deepseek3_blocks
-from pretraining.common.patterns.blocks import gpt2 as gpt2_blocks
-from pretraining.common.patterns.blocks import llama3 as llama3_blocks
+from pretraining.common.models.architectures import deepseek3
+from pretraining.common.models.architectures import gpt2
+from pretraining.common.models.architectures import llama3
+from pretraining.common.models.blocks import block_group
+from pretraining.common.models.blocks import deepseek3_blocks
+from pretraining.common.models.blocks import gpt2_blocks
+from pretraining.common.models.blocks import llama3_blocks
 from pretraining.configs import loader
 from pretraining.configs.model.architectures import deepseek
 from pretraining.configs.model.architectures import gpt
@@ -40,18 +40,20 @@ class TestFSDPWrapPolicies(unittest.TestCase):
         debug_dir = get_debug_configs_dir()
 
         # Load GPT-2 config
-        gpt2_training = loader.load_training_config(debug_dir / "gpt2_debug.yaml", gpt.GPT2Config)
+        gpt2_training = loader.load_training_config(
+            debug_dir / "gpt2_debug_cpu.yaml", gpt.GPT2Config
+        )
         self.gpt2_config = gpt2_training.llm
 
         # Load Llama3 config
         llama_training = loader.load_training_config(
-            debug_dir / "llama31_debug.yaml", llama.Llama3Config
+            debug_dir / "llama3_debug_cpu.yaml", llama.Llama3Config
         )
         self.llama_config = llama_training.llm
 
         # Load DeepSeek3 config
         deepseek_training = loader.load_training_config(
-            debug_dir / "deepseek3_debug.yaml", deepseek.DeepSeek3Config
+            debug_dir / "deepseek3_debug_cpu.yaml", deepseek.DeepSeek3Config
         )
         self.deepseek_config = deepseek_training.llm
 
@@ -162,7 +164,9 @@ class TestBlockGroup(unittest.TestCase):
         """Set up test configuration."""
         # Load GPT-2 config from debug YAML
         debug_dir = get_debug_configs_dir()
-        gpt2_training = loader.load_training_config(debug_dir / "gpt2_debug.yaml", gpt.GPT2Config)
+        gpt2_training = loader.load_training_config(
+            debug_dir / "gpt2_debug_cpu.yaml", gpt.GPT2Config
+        )
         self.config = gpt2_training.llm
 
     def test_block_group_forward(self):

@@ -11,7 +11,7 @@ from torch import nn
 from torch import testing
 
 # Project
-from pretraining.common.patterns.moe import aux_loss_free
+from pretraining.common.models.moe import aux_loss_free
 
 
 class TestAuxLossFreeMoE:
@@ -31,7 +31,7 @@ class TestAuxLossFreeMoE:
         """Test AuxLossFreeMoE initializes correctly."""
         # Should have shared expert
         assert auxfree_moe.shared_expert is not None
-        assert isinstance(auxfree_moe.shared_expert, nn.Sequential)
+        assert isinstance(auxfree_moe.shared_expert, nn.Module)
 
         # Should have learnable bias
         assert hasattr(auxfree_moe, "gate_bias")
@@ -84,7 +84,7 @@ class TestAuxLossFreeMoE:
             auxfree_moe.gate_bias.zero_()
 
         # Compute affinity scores
-        affinity_scores = auxfree_moe._compute_centroid_affinity(x)
+        affinity_scores = auxfree_moe._compute_centroid_affinity(x, auxfree_moe.expert_centroids)
         baseline_scores = affinity_scores + auxfree_moe.gate_bias
         _, baseline_indices = auxfree_moe._select_top_k_experts(baseline_scores, 2)
         baseline_expert_0 = (baseline_indices == 0).sum().item()
@@ -149,7 +149,7 @@ class TestAuxLossFreeMoE:
         x = torch.randn(1, 4, 128)
 
         # Compute affinity scores and add bias
-        affinity_scores = auxfree_moe._compute_centroid_affinity(x)
+        affinity_scores = auxfree_moe._compute_centroid_affinity(x, auxfree_moe.expert_centroids)
         gating_scores = affinity_scores + auxfree_moe.gate_bias
 
         # Check shape: [batch*seq, num_experts]
@@ -179,7 +179,7 @@ class TestAuxLossFreeMoE:
         x = torch.randn(batch_size, seq_len, 128)
 
         # Get routing decisions
-        affinity_scores = auxfree_moe._compute_centroid_affinity(x)
+        affinity_scores = auxfree_moe._compute_centroid_affinity(x, auxfree_moe.expert_centroids)
         gating_scores = affinity_scores + auxfree_moe.gate_bias
         expert_weights, expert_indices = auxfree_moe._select_top_k_experts(gating_scores, 2)
         expert_weights = auxfree_moe._normalize_expert_weights(expert_weights)

@@ -4,9 +4,10 @@ import os
 
 # Third Party
 import torch
+from packaging import version
 
 # Project
-from pretraining.common.patterns.architectures import llama3
+from pretraining.common.models.architectures import llama3
 from pretraining.configs import core
 from pretraining.configs import loader
 from pretraining.configs.model.architectures import llama
@@ -26,7 +27,7 @@ from pretraining.utils.training import optimizer
 from pretraining.utils.training.checkpointers import checkpointer_factory
 
 
-def main(trainer_config: core.TrainerConfig) -> None:
+def main(trainer_config: core.TrainerConfig[llama.Llama3Config]) -> None:
     """Main training function that runs after distributed setup."""
     device = trainer_config.training.execution.setup_device()
 
@@ -65,11 +66,8 @@ def main(trainer_config: core.TrainerConfig) -> None:
             trainer_config.training.precision_dtype,
         )
 
-        # Initialize parameters if needed (following OLMo's pattern)
-        # Third Party
-        import packaging.version
-
-        if packaging.version.parse(torch.__version__) >= packaging.version.parse("2.1.0"):
+        # Initialize parameters if needed
+        if version.parse(torch.__version__) >= version.parse("2.1.0"):
             model.reset_parameters()
 
     else:  # SINGLE

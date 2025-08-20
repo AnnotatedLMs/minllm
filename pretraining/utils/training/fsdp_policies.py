@@ -5,7 +5,7 @@ import typing
 from torch import nn
 
 # Project
-from pretraining.common.patterns.blocks import block_group
+from pretraining.common.models.blocks import block_group
 from pretraining.configs.training import execution_configs
 
 

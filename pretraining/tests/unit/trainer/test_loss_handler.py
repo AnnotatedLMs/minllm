@@ -7,8 +7,8 @@ import pytest
 import torch
 
 # Project
-from pretraining.common.base import inputs
-from pretraining.common.base import outputs
+from pretraining.common.models import inputs
+from pretraining.common.models import outputs
 from pretraining.configs.training import loss_configs
 from pretraining.utils.training import loss
 

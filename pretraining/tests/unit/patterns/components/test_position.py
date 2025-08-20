@@ -10,9 +10,9 @@ import torch
 from torch import testing
 
 # Project
-from pretraining.common.patterns.position import core
-from pretraining.common.patterns.position import learned
-from pretraining.common.patterns.position import rope_partial
+from pretraining.common.models.position import learned
+from pretraining.common.models.position import partial_rope
+from pretraining.common.models.position import rope
 from pretraining.configs.model.components import position
 
 
@@ -20,15 +20,15 @@ class TestRoPE:
     """Test RoPE implementation."""
 
     @pytest.fixture
-    def rope_module(self) -> core.PrecomputedRoPE:
+    def rope_module(self) -> rope.PrecomputedRoPE:
         """Create a RoPE module."""
-        return core.PrecomputedRoPE(
+        return rope.PrecomputedRoPE(
             dim=64,  # head_dim
             theta=10000.0,
             max_seq_len=128,
         )
 
-    def test_rope_initialization(self, rope_module: core.PrecomputedRoPE) -> None:
+    def test_rope_initialization(self, rope_module: rope.PrecomputedRoPE) -> None:
         """Test RoPE initializes correctly."""
         assert rope_module.dim == 64
         assert rope_module.max_seq_len == 128
@@ -40,7 +40,7 @@ class TestRoPE:
         assert hasattr(rope_module, "inv_freq")
         assert isinstance(rope_module.inv_freq, torch.Tensor)
 
-    def test_rope_forward_basic(self, rope_module: core.PrecomputedRoPE) -> None:
+    def test_rope_forward_basic(self, rope_module: rope.PrecomputedRoPE) -> None:
         """Test basic forward pass."""
         batch_size, seq_len, num_heads, head_dim = 2, 10, 8, 64
         x = torch.randn(batch_size, seq_len, num_heads, head_dim)
@@ -54,7 +54,7 @@ class TestRoPE:
         # Check output is different from input (rotation applied)
         assert not torch.allclose(output, x)
 
-    def test_rope_position_offset(self, rope_module: core.PrecomputedRoPE) -> None:
+    def test_rope_position_offset(self, rope_module: rope.PrecomputedRoPE) -> None:
         """Test position offset functionality for KV caching."""
         batch_size, num_heads, head_dim = 2, 8, 64
 
@@ -74,7 +74,7 @@ class TestRoPE:
         testing.assert_close(out1, out_full[:, :1])
         testing.assert_close(out2, out_full[:, 1:2])
 
-    def test_rope_max_position_exceeded(self, rope_module: core.PrecomputedRoPE) -> None:
+    def test_rope_max_position_exceeded(self, rope_module: rope.PrecomputedRoPE) -> None:
         """Test error when position exceeds precomputed max."""
         x = torch.randn(2, 10, 8, 64)
 
@@ -82,7 +82,7 @@ class TestRoPE:
         with pytest.raises(ValueError, match="exceeds precomputed max"):
             rope_module(x, position_offset=120)  # 120 + 10 > 128
 
-    def test_rope_deterministic(self, rope_module: core.PrecomputedRoPE) -> None:
+    def test_rope_deterministic(self, rope_module: rope.PrecomputedRoPE) -> None:
         """Test RoPE is deterministic."""
         x = torch.randn(2, 10, 8, 64)
 
@@ -96,19 +96,19 @@ class TestPartialRoPE:
     """Test PartialRoPE implementation for DeepSeek."""
 
     @pytest.fixture
-    def partial_rope(self) -> rope_partial.PartialRoPE:
+    def partial_rope_module(self) -> partial_rope.PartialRoPE:
         """Create a PartialRoPE module."""
-        return rope_partial.PartialRoPE(
+        return partial_rope.PartialRoPE(
             dim=64,  # rope_dim, not full head_dim
             theta=10000.0,
         )
 
-    def test_partial_rope_forward(self, partial_rope: rope_partial.PartialRoPE) -> None:
+    def test_partial_rope_forward(self, partial_rope_module: partial_rope.PartialRoPE) -> None:
         """Test PartialRoPE forward pass."""
         batch_size, num_heads, seq_len, rope_dim = 2, 8, 10, 64
         x = torch.randn(batch_size, num_heads, seq_len, rope_dim)
 
-        output = partial_rope(x)
+        output = partial_rope_module(x)
 
         # Check output shape
         assert output.shape == x.shape
@@ -116,12 +116,14 @@ class TestPartialRoPE:
         # Check rotation applied
         assert not torch.allclose(output, x)
 
-    def test_partial_rope_no_position_offset(self, partial_rope: rope_partial.PartialRoPE) -> None:
+    def test_partial_rope_no_position_offset(
+        self, partial_rope_module: partial_rope.PartialRoPE
+    ) -> None:
         """Test PartialRoPE doesn't accept position_offset."""
         x = torch.randn(2, 8, 10, 64)
 
         # Should work without position_offset
-        output = partial_rope(x)
+        output = partial_rope_module(x)
         assert output.shape == x.shape
 
         # Note: PartialRoPE.forward() doesn't accept position_offset parameter
@@ -177,7 +179,7 @@ class TestRoPEScaling:
             original_context_len=8192,
         )
 
-        rope_module = core.PrecomputedRoPE(
+        rope_module = rope.PrecomputedRoPE(
             dim=128,
             theta=500000.0,
             max_seq_len=65536,  # Extended context

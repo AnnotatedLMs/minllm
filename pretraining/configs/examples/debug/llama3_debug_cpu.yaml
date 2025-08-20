@@ -31,7 +31,7 @@ model:
     # RoPE position encoding
     rope:
       theta: 10000.0
-      scaling:  # For extended context
+      linear_scaling:  # For extended context
         scale_factor: 2.0
         low_freq_factor: 1.0
         high_freq_factor: 4.0

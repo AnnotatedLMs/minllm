@@ -58,13 +58,23 @@ uv sync --no-dev
 
 ## Supported Models
 
-| Model | Status |
-|-------|--------|
-| GPT-2 | ✅ |
-| LLaMA 3.1 | ✅ |
-| DeepSeek 3 | ✅ |
-| Qwen 3 | ❌ |
-| Kimi k2 | ❌ |
+| Model | CPU | GPU | DDP | FSDP |
+|-------|-----|-----|-----|------|
+| GPT-2 | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| LLaMA 3.1 | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| DeepSeek 3 | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| Qwen 3 | ❌ | ❌ | ❌ | ❌ |
+| Kimi k2 | ❌ | ❌ | ❌ | ❌ |
+
+## Supported Post-training
+
+| Method | Status |
+|--------|--------|
+| YaRN | ❌ |
+| PPO | ❌ |
+| DPO | ❌ |
+| GRPO | ❌ |
+| GSPO | ❌ |
 
 ## Contributing Guidelines
 

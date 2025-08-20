@@ -7,8 +7,8 @@ import torch
 from torch import nn
 
 # Project
-from pretraining.common.base import inputs
-from pretraining.common.base import outputs
+from pretraining.common.models import inputs
+from pretraining.common.models import outputs
 from pretraining.configs.training import loss_configs
 
 
