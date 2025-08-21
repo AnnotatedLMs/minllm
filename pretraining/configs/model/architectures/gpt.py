@@ -30,15 +30,12 @@ class GPT2Config(base.BaseLLMConfig):
                 f"transformer hidden_dim ({self.transformer.hidden_dim})"
             )
 
-        # GPT-2 doesn't traditionally use RoPE
         if self.transformer.rope is not None:
             raise ValueError("GPT-2 architecture should not have RoPE config")
 
-        # GPT-2 traditionally uses tied embeddings
         if not self.output_head.tie_word_embeddings:
             raise ValueError("GPT-2 requires tied embeddings (tie_word_embeddings=True)")
 
-        # GPT-2 doesn't traditionally use lm_head bias (because of tied embeddings)
         if self.output_head.lm_head_bias:
             raise ValueError("GPT-2 cannot use lm_head_bias with tied embeddings")
 
@@ -52,12 +49,10 @@ class GPT2Config(base.BaseLLMConfig):
 
         model_dict = config_dict["model"]
 
-        # GPT2 uses GPT2InitConfig
         model_dict["weight_init"] = initialization.GPT2InitConfig.model_validate(
             model_dict["weight_init"]
         )
 
-        # GPT2 uses LayerNorm and standard multi-head attention
         trans_dict = model_dict["transformer"]
         trans_dict["normalization"] = normalization.LayerNormConfig.model_validate(
             trans_dict["normalization"]
@@ -66,7 +61,6 @@ class GPT2Config(base.BaseLLMConfig):
             trans_dict["attention"]
         )
 
-        # Create GPT2TransformerConfig
         model_dict["transformer"] = transformer.GPT2TransformerConfig.model_validate(trans_dict)
 
         return cls.model_validate(model_dict)

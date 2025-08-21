@@ -1,14 +1,10 @@
 # Standard Library
-import math
 import typing
 
 # Third Party
 import torch
 import transformers
 from torch.optim import lr_scheduler
-
-# Project
-from pretraining.configs.training import lr_configs
 
 
 class LRSchedulerFactory:
@@ -142,73 +138,3 @@ class LRSchedulerFactory:
             return phase_lr_funcs[-1](phase_steps[-1] - 1)
 
         return lr_scheduler.LambdaLR(optimizer, lr_lambda)
-
-    @staticmethod
-    def create_from_config(
-        optimizer: torch.optim.Optimizer,
-        config: lr_configs.LearningRateScheduleConfig,
-        num_training_steps: int,
-    ) -> lr_scheduler.LRScheduler:
-        """
-        Create learning rate scheduler from configuration object.
-
-        Args:
-            optimizer: Optimizer to schedule
-            config: LR schedule configuration
-            num_training_steps: Total number of training steps
-
-        Returns:
-            Configured LR scheduler
-        """
-        if config.schedule_type == "constant":
-            return LRSchedulerFactory.create_constant(optimizer)
-
-        elif config.schedule_type in ["cosine", "cosine_with_warmup"]:
-            # Default num_cycles to 0.5 if not specified
-            num_cycles = config.num_cycles if config.num_cycles is not None else 0.5
-
-            return LRSchedulerFactory.create_cosine_with_warmup(
-                optimizer=optimizer,
-                num_warmup_steps=config.warmup_iters,
-                num_training_steps=num_training_steps,
-                num_cycles=num_cycles,
-            )
-
-        elif config.schedule_type == "multiphase":
-            if config.phase_steps is None or config.phase_names is None:
-                raise ValueError("multiphase schedule requires phase_steps and phase_names")
-
-            # Create phase functions based on phase names
-            phase_lr_funcs = []
-            for i, phase_name in enumerate(config.phase_names):
-                if phase_name == "warmup":
-                    # Linear warmup
-                    warmup_steps = config.phase_steps[i]
-                    phase_lr_funcs.append(lambda s, steps=warmup_steps: s / steps)
-
-                elif phase_name == "constant":
-                    # Constant at full LR
-                    phase_lr_funcs.append(lambda s: 1.0)
-
-                elif phase_name == "decay":
-                    # Cosine decay to min_lr
-                    decay_steps = config.phase_steps[i]
-                    min_lr_ratio = config.min_lr / optimizer.param_groups[0]["lr"]
-                    phase_lr_funcs.append(
-                        lambda s, steps=decay_steps, min_ratio=min_lr_ratio: 0.5
-                        * (1 + math.cos(math.pi * s / steps))
-                        * (1 - min_ratio)
-                        + min_ratio
-                    )
-
-                else:
-                    raise ValueError(f"Unknown phase name: {phase_name}")
-
-            return LRSchedulerFactory.create_multiphase_schedule(
-                optimizer=optimizer,
-                phase_steps=config.phase_steps,
-                phase_lr_funcs=phase_lr_funcs,
-            )
-
-        else:
-            raise ValueError(f"Unknown schedule type: {config.schedule_type}")

@@ -4,7 +4,6 @@ import os
 
 # Third Party
 import torch
-from packaging import version
 
 # Project
 from pretraining.common.models.architectures import gpt2
@@ -22,9 +21,8 @@ from pretraining.utils.training import evaluation
 from pretraining.utils.training import launcher
 from pretraining.utils.training import loss
 from pretraining.utils.training import lr_scheduler
-from pretraining.utils.training import model_wrapper
 from pretraining.utils.training import optimizer
-from pretraining.utils.training.checkpointers import checkpointer_factory
+from pretraining.utils.training import setup
 
 
 def main(trainer_config: core.TrainerConfig[gpt.GPT2Config]) -> None:
@@ -43,35 +41,25 @@ def main(trainer_config: core.TrainerConfig[gpt.GPT2Config]) -> None:
     log.info("Building GPT-2 model...")
     model = gpt2.GPT2.from_config(trainer_config.llm)
 
-    # Move model to device (FSDP handles this internally)
-    if trainer_config.training.execution.strategy != execution_configs.ExecutionStrategy.FSDP:
-        model = model.to(device)
+    # (device placement, wrapping, initialization)
+    dist_model = setup.prepare_model_for_training(model, trainer_config, device)
 
-    # Wrap model based on execution strategy
-    log.info(f"Wrapping model with {trainer_config.training.execution.strategy.value}...")
-    dist_model = model_wrapper.wrap_model(
-        model,
-        trainer_config.training.execution,
-        trainer_config.training.precision_dtype,
+    optim = optimizer.OptimizerFactory.create_adamw(
+        model=dist_model,
+        learning_rate=trainer_config.training.optimizer.learning_rate,
+        weight_decay=trainer_config.training.optimizer.weight_decay,
+        betas=(trainer_config.training.optimizer.beta1, trainer_config.training.optimizer.beta2),
+        eps=trainer_config.training.optimizer.eps,
+        parameter_grouping=trainer_config.training.optimizer.parameter_grouping,
+        no_decay_patterns=trainer_config.training.optimizer.no_decay_patterns,
+        device_type=device.type,
     )
 
-    # Initialize parameters if needed (following OLMo's pattern)
-    # When param_init_fn is None, FSDP will call reset_parameters() automatically
-    # For DDP or when using PyTorch >= 2.1.0 with FSDP, we need to call it manually
-    if trainer_config.training.execution.strategy == execution_configs.ExecutionStrategy.DDP:
-        model.reset_parameters()
-    elif trainer_config.training.execution.strategy == execution_configs.ExecutionStrategy.FSDP:
-        if version.parse(torch.__version__) >= version.parse("2.1.0"):
-            model.reset_parameters()
-
-    optim = optimizer.OptimizerFactory.create_from_config(
-        dist_model, trainer_config.training.optimizer, device_type=device.type
-    )
-
-    scheduler = lr_scheduler.LRSchedulerFactory.create_from_config(
-        optim,
-        trainer_config.training.lr_schedule,
+    scheduler = lr_scheduler.LRSchedulerFactory.create_cosine_with_warmup(
+        optimizer=optim,
+        num_warmup_steps=trainer_config.training.lr_schedule.warmup_iters,
         num_training_steps=trainer_config.training.max_iters,
+        num_cycles=trainer_config.training.lr_schedule.num_cycles,
     )
 
     # We'll load checkpoint after creating trainer
@@ -140,7 +128,7 @@ def main(trainer_config: core.TrainerConfig[gpt.GPT2Config]) -> None:
     trainer = llm_trainer.LLMTrainer(
         model=model,
         dist_model=dist_model,
-        config=trainer_config,  # Pass full config now
+        config=trainer_config,
         optimizer=optim,
         scheduler=scheduler,
         loss_handler=loss_handler,
@@ -154,22 +142,8 @@ def main(trainer_config: core.TrainerConfig[gpt.GPT2Config]) -> None:
 
     trainer.setup()
 
-    # Try to load checkpoint if resuming
-    should_resume, resume_path = checkpointer_factory.should_resume_training(
-        trainer_config.training.checkpoint
-    )
-    if should_resume:
-        log.info(f"Attempting to resume from {resume_path}")
-        if trainer.load_checkpoint():
-            log.info(f"Successfully resumed from iteration {trainer.state.iteration}")
-            # Update start_index and epoch from loaded state
-            if hasattr(trainer.state, "training_state"):
-                start_index = trainer.state.training_state.get("tokens_seen", 0)
-                epoch = trainer.state.training_state.get("epoch", 0)
-        else:
-            log.warning(f"Failed to load checkpoint from {resume_path}, starting from scratch")
+    start_index, epoch = setup.load_checkpoint_if_resuming(trainer, trainer_config)
 
-    # Synchronize all ranks before starting training
     dist_utils.barrier()
 
     try:
@@ -185,13 +159,7 @@ def main(trainer_config: core.TrainerConfig[gpt.GPT2Config]) -> None:
         raise
 
     finally:
-        # Save final checkpoint
-        if dist_utils.is_main_process():
-            log.info("Saving final checkpoint...")
-        checkpoint_path = trainer.save_checkpoint()
-        if dist_utils.is_main_process():
-            log.info(f"Final checkpoint saved to {checkpoint_path}")
-
+        setup.save_final_checkpoint(trainer)
         trainer.cleanup()
 
 

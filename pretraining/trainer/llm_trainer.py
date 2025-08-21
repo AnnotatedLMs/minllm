@@ -102,7 +102,7 @@ class LLMTrainer:
 
         # Will be initialized in setup()
         self.logger = None
-        self.state = None
+        self.state: state.TrainingState = None
         self.num_params = None
 
     def setup(self) -> None:

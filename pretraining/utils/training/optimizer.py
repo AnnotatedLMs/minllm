@@ -8,9 +8,6 @@ import torch
 from torch import nn
 from torch import optim
 
-# Project
-from pretraining.configs.training import optimizer_configs
-
 logger = logging.getLogger(__name__)
 
 
@@ -48,19 +45,6 @@ class OptimizerFactory:
         Strategy:
         - 1D parameters (biases, layernorms) get no weight decay
         - 2D+ parameters (weight matrices) get weight decay
-
-        This is based on the insight that biases and normalization parameters shouldn't be regularized with weight decay.
-
-        Used by:
-        - GPT-2 (nanoGPT): Standard approach
-        - Llama: Same dimension-based approach
-
-        Args:
-            model: Model to create groups for
-            weight_decay: Weight decay for 2D+ parameters
-
-        Returns:
-            List of parameter groups for optimizer
         """
         param_dict = {pn: p for pn, p in model.named_parameters() if p.requires_grad}
 
@@ -84,18 +68,6 @@ class OptimizerFactory:
         Strategy:
         - Parameters matching no_decay_patterns get no weight decay
         - All other parameters get weight decay
-
-        Used by:
-        - DeepSeek: Name-based approach with explicit patterns
-
-        Args:
-            model: Model to create groups for
-            weight_decay: Weight decay for non-excluded parameters
-            no_decay_patterns: List of name patterns to exclude from decay
-                              (default: ['bias', 'LayerNorm.weight', 'layernorm', 'norm'])
-
-        Returns:
-            List of parameter groups for optimizer
         """
         param_dict = {pn: p for pn, p in model.named_parameters() if p.requires_grad}
 
@@ -187,34 +159,3 @@ class OptimizerFactory:
             f"weight_decay={weight_decay}, grouping={parameter_grouping})"
         )
         return optimizer
-
-    @staticmethod
-    def create_from_config(
-        model: nn.Module,
-        config: optimizer_configs.OptimizerConfig,
-        device_type: str = "cuda",
-    ) -> optim.Optimizer:
-        """
-        Create optimizer from configuration object.
-
-        Args:
-            model: Model to optimize
-            config: Optimizer configuration
-            device_type: Device for fused optimizer check
-
-        Returns:
-            Configured optimizer
-        """
-        if config.optimizer_type == "adamw":
-            return OptimizerFactory.create_adamw(
-                model=model,
-                learning_rate=config.learning_rate,
-                weight_decay=config.weight_decay,
-                betas=(config.beta1, config.beta2),
-                eps=config.eps,
-                parameter_grouping=config.parameter_grouping,
-                no_decay_patterns=config.no_decay_patterns,
-                device_type=device_type,
-            )
-        else:
-            raise ValueError(f"Unknown optimizer type: {config.optimizer_type}")

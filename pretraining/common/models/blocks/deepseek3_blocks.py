@@ -67,6 +67,7 @@ class DeepSeek3TransformerBlock(nn.Module):
             rope_dim=rope_dim,
             dropout=dropout,
             is_causal=True,
+            use_flash_attention=use_flash_attention,
         )
 
         self.moe = aux_loss_free.AuxLossFreeMoE(

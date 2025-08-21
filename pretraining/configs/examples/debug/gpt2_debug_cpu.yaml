@@ -43,7 +43,7 @@ model:
 
     # Feed-forward network
     ffn:
-      intermediate_dim: 256  # 4 * hidden_dim
+      intermediate_dim: 256
       activation: gelu
       bias: true
 
@@ -90,6 +90,7 @@ training:
     warmup_iters: 2
     lr_decay_iters: 10
     min_lr: 0.00006
+    num_cycles: 0.5  # Half-cosine decay
 
   # Loss configuration
   loss:

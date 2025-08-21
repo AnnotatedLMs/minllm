@@ -10,6 +10,7 @@ from torch import nn
 # Project
 from pretraining.common.models.attention import attention_mixins
 from pretraining.common.models.attention import compression_mixins
+from pretraining.common.models.attention import flash_mla_mixin
 from pretraining.common.models.attention import projection_mixins
 from pretraining.common.models.position import partial_rope
 from pretraining.common.models.position import position_mixins
@@ -22,6 +23,7 @@ class MultiHeadLatentAttention(
     position_mixins.PartialRoPEApplicationMixin,
     attention_mixins.ManualAttentionMixin,
     attention_mixins.MultiHeadReshapeMixin,
+    flash_mla_mixin.FlashMLAMixin,
 ):
     """
     Multi-head Latent Attention (MLA) - Compression-based attention for large models.
@@ -66,6 +68,7 @@ class MultiHeadLatentAttention(
         rope_dim: int = 64,
         dropout: float = 0.0,
         is_causal: bool = True,
+        use_flash_attention: bool = False,
     ):
         super().__init__()
 
@@ -76,6 +79,7 @@ class MultiHeadLatentAttention(
         self.key_rope_module = key_rope_module
         self.query_rope_module = query_rope_module
         self.is_causal = is_causal
+        self.use_flash_attention = use_flash_attention
 
         # Compression layers
         self.kv_down = nn.Linear(hidden_dim, kv_compression_dim)
@@ -150,7 +154,7 @@ class MultiHeadLatentAttention(
         keys_full = keys_full.transpose(1, 2)
         values = values.transpose(1, 2)
 
-        # Step 7: Use manual attention with correct total dimension for scaling
+        # Step 7: Compute attention using FlashMLA or manual attention
         total_dim = self.head_dim + self.rope_dim
 
         # Get mscale factor from key RoPE module (only keys have YaRN)
@@ -161,17 +165,31 @@ class MultiHeadLatentAttention(
         attention_scale = (1.0 / math.sqrt(total_dim)) * mscale
 
         attn_output: jaxtyping.Float[torch.Tensor, "batch heads seq head_dim"]
-        attn_output = self._compute_manual_attention(
-            queries_full,
-            keys_full,
-            values,
-            total_dim,  # This is the key! MLA uses total_dim for scaling
-            self.is_causal,
-            attention_scale,  # Now includes mscale adjustment
-            attention_mask,
-            None,  # No causal mask buffer
-            self.attn_dropout,
-        )
+
+        if self.use_flash_attention:
+            # Use FlashMLA optimized kernels
+            attn_output = self._compute_flash_mla_attention(
+                queries_full,
+                keys_full,
+                values,
+                total_dim,
+                self.is_causal,
+                attention_scale,
+                self.attn_dropout,
+            )
+        else:
+            # Use manual attention computation
+            attn_output = self._compute_manual_attention(
+                queries_full,
+                keys_full,
+                values,
+                total_dim,  # This is the key! MLA uses total_dim for scaling
+                self.is_causal,
+                attention_scale,  # Now includes mscale adjustment
+                attention_mask,
+                None,  # No causal mask buffer
+                self.attn_dropout,
+            )
 
         # Step 8: Merge heads back
         attn_output = attn_output.transpose(1, 2).contiguous()

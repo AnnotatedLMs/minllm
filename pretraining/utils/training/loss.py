@@ -29,7 +29,6 @@ class LossHandler:
     - Cross-entropy loss: Standard next token prediction loss
     - MTP losses: Multi-token prediction losses for future tokens
     - Auxiliary loss (MoE): Load balancing loss from MoE layers
-    - Z-loss: Optional logit regularization for training stability
     """
 
     def __init__(self, loss_config: loss_configs.LossConfig):
@@ -65,35 +64,9 @@ class LossHandler:
         shift_labels = shift_labels.view(-1)
 
         # Compute loss
-        if self.config.use_fused_loss:
-            # TODO: Use fused cross-entropy from flash-attn if available
-            loss = nn.functional.cross_entropy(
-                shift_logits, shift_labels, ignore_index=ignore_index
-            )
-        else:
-            loss = nn.functional.cross_entropy(
-                shift_logits, shift_labels, ignore_index=ignore_index
-            )
+        loss = nn.functional.cross_entropy(shift_logits, shift_labels, ignore_index=ignore_index)
 
         return loss
-
-    def compute_z_loss(
-        self,
-        logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"],
-    ) -> torch.Tensor:
-        """Compute z-loss for training stability (from OLMo).
-
-        Z-loss encourages logits to stay close to zero, improving stability.
-
-        Args:
-            logits: Model output logits [batch, seq, vocab]
-
-        Returns:
-            Z-loss (scalar tensor)
-        """
-        # Z-loss is the squared norm of logits
-        z_loss = torch.square(logits).mean()
-        return z_loss
 
     def compute_mtp_losses(
         self,
@@ -152,10 +125,6 @@ class LossHandler:
             training_inputs.labels,
             ignore_index=self.config.ignore_index,
         )
-
-        # Compute z-loss if enabled
-        if self.config.z_loss_weight is not None and self.config.z_loss_weight > 0:
-            losses["z_loss"] = self.compute_z_loss(model_output.logits)
 
         # Compute MTP losses if present
         if model_output.mtp_logits is not None and training_inputs.mtp_targets is not None:

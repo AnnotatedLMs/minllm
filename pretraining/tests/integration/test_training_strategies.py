@@ -57,15 +57,23 @@ class TestCPUTraining(unittest.TestCase):
         dist_model = dist_utils.SingleAccelerator(model)
 
         # Create optimizer
-        optim = optimizer.OptimizerFactory.create_from_config(
-            dist_model, self.training_config.optimizer, device_type=device.type
+        optim = optimizer.OptimizerFactory.create_adamw(
+            model=dist_model,
+            learning_rate=self.training_config.optimizer.learning_rate,
+            weight_decay=self.training_config.optimizer.weight_decay,
+            betas=(self.training_config.optimizer.beta1, self.training_config.optimizer.beta2),
+            eps=self.training_config.optimizer.eps,
+            parameter_grouping=self.training_config.optimizer.parameter_grouping,
+            no_decay_patterns=self.training_config.optimizer.no_decay_patterns,
+            device_type=device.type,
         )
 
         # Create scheduler
-        scheduler = lr_scheduler.LRSchedulerFactory.create_from_config(
-            optim,
-            self.training_config.lr_schedule,
+        scheduler = lr_scheduler.LRSchedulerFactory.create_cosine_with_warmup(
+            optimizer=optim,
+            num_warmup_steps=self.training_config.lr_schedule.warmup_iters,
             num_training_steps=self.training_config.max_iters,
+            num_cycles=self.training_config.lr_schedule.num_cycles,
         )
 
         # Create dummy data
@@ -149,15 +157,23 @@ class TestSingleGPUTraining(unittest.TestCase):
         dist_model = dist_utils.SingleAccelerator(model)
 
         # Create optimizer
-        optim = optimizer.OptimizerFactory.create_from_config(
-            dist_model, self.training_config.optimizer, device_type=device.type
+        optim = optimizer.OptimizerFactory.create_adamw(
+            model=dist_model,
+            learning_rate=self.training_config.optimizer.learning_rate,
+            weight_decay=self.training_config.optimizer.weight_decay,
+            betas=(self.training_config.optimizer.beta1, self.training_config.optimizer.beta2),
+            eps=self.training_config.optimizer.eps,
+            parameter_grouping=self.training_config.optimizer.parameter_grouping,
+            no_decay_patterns=self.training_config.optimizer.no_decay_patterns,
+            device_type=device.type,
         )
 
         # Create scheduler
-        scheduler = lr_scheduler.LRSchedulerFactory.create_from_config(
-            optim,
-            self.training_config.lr_schedule,
+        scheduler = lr_scheduler.LRSchedulerFactory.create_cosine_with_warmup(
+            optimizer=optim,
+            num_warmup_steps=self.training_config.lr_schedule.warmup_iters,
             num_training_steps=self.training_config.max_iters,
+            num_cycles=self.training_config.lr_schedule.num_cycles,
         )
 
         # Create dummy data

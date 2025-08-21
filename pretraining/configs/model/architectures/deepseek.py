@@ -63,7 +63,6 @@ class DeepSeek3Config(base.BaseLLMConfig):
 
         model_dict = config_dict["model"]
 
-        # Transform transformer components to concrete types
         trans_dict = model_dict["transformer"]
         trans_dict["normalization"] = normalization.RMSNormConfig.model_validate(
             trans_dict["normalization"]
@@ -72,13 +71,10 @@ class DeepSeek3Config(base.BaseLLMConfig):
             trans_dict["attention"]
         )
 
-        # Parse RoPE config
         trans_dict["rope"] = position.RoPEConfig.model_validate(trans_dict["rope"])
 
-        # Parse MTP config
         model_dict["mtp"] = heads.MultiTokenPredictionConfig.model_validate(model_dict["mtp"])
 
-        # Create DeepSeek3TransformerConfig
         model_dict["transformer"] = transformer.DeepSeek3TransformerConfig.model_validate(
             trans_dict
         )

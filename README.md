@@ -24,18 +24,54 @@ Clone the repository and set up the environment:
 ```bash
 # Clone repo
 git clone https://github.com/chengyjonathan/minllm.git
+cd minllm
 
-# Install all dependencies
-uv sync
+# Install dependencies based on your hardware:
 
+# Choose one:
+# For CPU-only development/testing:
+uv sync --extra cpu
+# For GPU training (CUDA 12.8):
+uv sync --extra cu128
+
+# Install pre-commit hooks
 uv run pre-commit install
 ```
+
+### Installation Options
+
+#### CPU Installation
+For development or testing without GPU acceleration:
+```bash
+uv sync --extra cpu
+```
+- PyTorch CPU-only builds
+- All base dependencies
+
+#### GPU Installation (CUDA 12.8)
+For training with GPU acceleration:
+```bash
+uv sync --extra cu128
+```
+- PyTorch with CUDA 12.8 support
+- All base dependencies
+
+##### Optional: FlashMLA Installation (Linux + NVIDIA GPU only)
+For optimized DeepSeek3 attention on compatible GPUs (SM90/SM100):
+```bash
+# After running uv sync --extra cu128
+git clone https://github.com/deepseek-ai/FlashMLA.git
+cd FlashMLA
+uv pip install -v .
+cd ..
+```
+**Note:** FlashMLA requires NVIDIA GPU with SM90/SM100 architecture (Ada Lovelace/Hopper), CUDA 12.x, and Linux. It will be automatically detected and used if available.
 
 ### Optional Setup
 
 ```bash
 # Install only production dependencies (no dev tools)
-uv sync --no-dev
+uv sync --no-dev --extra cpu  # or --extra cu128
 ```
 
   Directory Structure
@@ -92,5 +128,64 @@ MIT License
   - https://github.com/karpathy/nano-llama31
   - https://github.com/allenai/OLMo
   - https://github.com/allenai/open-instruct
+  - https://github.com/KellerJordan/modded-nanogpt
 
 I reorganized a lot of their code, annotated stuff, and invariably made it worse to use -- but easier (for me) to read.
+
+## Understanding pyproject.toml
+
+When you run `uv sync --extra gpu`, here's how the configuration works:
+
+### 1. Base Dependencies (always installed)
+```toml
+[project]
+dependencies = [
+    "torch>=2.7.1",          # Always installed (source depends on extra)
+    "accelerate>=1.8.1",
+    "datasets>=3.6.0",
+    # ... etc
+]
+```
+
+### 2. Optional Dependencies (activated by --extra flag)
+```toml
+[project.optional-dependencies]
+cu128 = [
+    "flash-mla",         # Only installed with --extra cu128
+]
+```
+
+### 3. Source Resolution (WHERE to get packages)
+```toml
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", extra = "cpu" },     # Used with --extra cpu
+  { index = "pytorch-cu128", extra = "cu128" }, # Used with --extra cu128
+]
+```
+**Note:** The `extra` markers mean you MUST specify either `--extra cpu` or `--extra cu128` when running `uv sync`, otherwise torch will be installed from PyPI (default).
+
+### 4. Index Definitions (what index names mean)
+```toml
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+```
+
+### 5. Conflicts (prevent mixing incompatible extras)
+```toml
+[tool.uv]
+conflicts = [
+  [{ extra = "cpu" }, { extra = "cu128" }]  # Can't use both together
+]
+```
+
+### Full Flow
+- `uv sync --extra cpu`: Installs torch from CPU index
+- `uv sync --extra cu128`: Installs torch from CUDA 12.8 index
+- `uv sync` alone: Would install torch from PyPI (not recommended)
+- FlashMLA: Must be manually installed for GPU users (see Installation Options)

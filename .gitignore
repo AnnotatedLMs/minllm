@@ -11,10 +11,9 @@ wheels/
 # Virtual environments
 .venv
 
-temp2/
-olmo_temp/
+temp/
 todo.md
-nanogpt.py
+
 pretraining/data/sample/fineweb10b
 posttraining/
 

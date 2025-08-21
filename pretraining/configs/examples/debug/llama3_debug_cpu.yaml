@@ -52,9 +52,8 @@ model:
 
 # Training configuration
 training:
-  # Top-level training loop fields
   token_budget: 2560
-  max_iters: 10  # Safety limit for debugging
+  max_iters: 10
   log_interval: 1
   seed: 1337
   gradient_accumulation_steps: 1
@@ -89,6 +88,7 @@ training:
     warmup_iters: 2
     lr_decay_iters: 10
     min_lr: 0.00001
+    num_cycles: 0.5  # Half-cosine decay
 
   # Loss configuration
   loss:

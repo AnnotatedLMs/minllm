@@ -78,15 +78,26 @@ class TestDDPTraining(unittest.TestCase):
         )
 
         # Create optimizer
-        optim = optimizer.OptimizerFactory.create_from_config(
-            dist_model, trainer_config.training.optimizer, device_type=self.device.type
+        optim = optimizer.OptimizerFactory.create_adamw(
+            model=dist_model,
+            learning_rate=trainer_config.training.optimizer.learning_rate,
+            weight_decay=trainer_config.training.optimizer.weight_decay,
+            betas=(
+                trainer_config.training.optimizer.beta1,
+                trainer_config.training.optimizer.beta2,
+            ),
+            eps=trainer_config.training.optimizer.eps,
+            parameter_grouping=trainer_config.training.optimizer.parameter_grouping,
+            no_decay_patterns=trainer_config.training.optimizer.no_decay_patterns,
+            device_type=self.device.type,
         )
 
         # Create scheduler
-        scheduler = lr_scheduler.LRSchedulerFactory.create_from_config(
-            optim,
-            trainer_config.training.lr_schedule,
+        scheduler = lr_scheduler.LRSchedulerFactory.create_cosine_with_warmup(
+            optimizer=optim,
+            num_warmup_steps=trainer_config.training.lr_schedule.warmup_iters,
             num_training_steps=trainer_config.training.max_iters,
+            num_cycles=trainer_config.training.lr_schedule.num_cycles,
         )
 
         # Create data with DistributedSampler
@@ -165,15 +176,26 @@ class TestDDPTraining(unittest.TestCase):
         )
 
         # Create optimizer
-        optim = optimizer.OptimizerFactory.create_from_config(
-            dist_model, trainer_config.training.optimizer, device_type=self.device.type
+        optim = optimizer.OptimizerFactory.create_adamw(
+            model=dist_model,
+            learning_rate=trainer_config.training.optimizer.learning_rate,
+            weight_decay=trainer_config.training.optimizer.weight_decay,
+            betas=(
+                trainer_config.training.optimizer.beta1,
+                trainer_config.training.optimizer.beta2,
+            ),
+            eps=trainer_config.training.optimizer.eps,
+            parameter_grouping=trainer_config.training.optimizer.parameter_grouping,
+            no_decay_patterns=trainer_config.training.optimizer.no_decay_patterns,
+            device_type=self.device.type,
         )
 
         # Create scheduler
-        scheduler = lr_scheduler.LRSchedulerFactory.create_from_config(
-            optim,
-            trainer_config.training.lr_schedule,
+        scheduler = lr_scheduler.LRSchedulerFactory.create_cosine_with_warmup(
+            optimizer=optim,
+            num_warmup_steps=trainer_config.training.lr_schedule.warmup_iters,
             num_training_steps=trainer_config.training.max_iters,
+            num_cycles=trainer_config.training.lr_schedule.num_cycles,
         )
 
         # Create data with DistributedSampler
@@ -251,15 +273,26 @@ class TestDDPTraining(unittest.TestCase):
         )
 
         # Create optimizer
-        optim = optimizer.OptimizerFactory.create_from_config(
-            dist_model, trainer_config.training.optimizer, device_type=self.device.type
+        optim = optimizer.OptimizerFactory.create_adamw(
+            model=dist_model,
+            learning_rate=trainer_config.training.optimizer.learning_rate,
+            weight_decay=trainer_config.training.optimizer.weight_decay,
+            betas=(
+                trainer_config.training.optimizer.beta1,
+                trainer_config.training.optimizer.beta2,
+            ),
+            eps=trainer_config.training.optimizer.eps,
+            parameter_grouping=trainer_config.training.optimizer.parameter_grouping,
+            no_decay_patterns=trainer_config.training.optimizer.no_decay_patterns,
+            device_type=self.device.type,
         )
 
         # Create scheduler
-        scheduler = lr_scheduler.LRSchedulerFactory.create_from_config(
-            optim,
-            trainer_config.training.lr_schedule,
+        scheduler = lr_scheduler.LRSchedulerFactory.create_cosine_with_warmup(
+            optimizer=optim,
+            num_warmup_steps=trainer_config.training.lr_schedule.warmup_iters,
             num_training_steps=trainer_config.training.max_iters,
+            num_cycles=trainer_config.training.lr_schedule.num_cycles,
         )
 
         # Create data with DistributedSampler
