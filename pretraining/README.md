@@ -6,7 +6,7 @@ This directory contains the pretraining infrastructure for MinLLM, supporting GP
 
 ### Training Scripts
 
-```bash
+```
 # Train GPT-2
 uv run python pretraining/scripts/train_gpt2.py
 
