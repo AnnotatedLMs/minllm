@@ -61,30 +61,6 @@ uv run pytest pretraining/tests/unit/patterns/test_moe.py -v
 uv run pytest pretraining/tests/unit/configs/test_config_parsing.py -v
 ```
 
-## Project Structure
-
-```
-pretraining/
-├── common/              # Shared base classes and interfaces
-│   ├── base/           # Abstract base classes for LLMs
-│   └── patterns/       # Reusable neural network patterns
-│       ├── architectures/  # Model implementations (GPT-2, Llama 3, DeepSeek 3)
-│       ├── blocks/        # Transformer blocks
-│       ├── cache/         # KV cache for efficient generation
-│       ├── components/    # Attention, FFN, normalization layers
-│       ├── heads/         # Output heads (single-token, multi-token)
-│       └── position/      # Position encodings (learned, RoPE, partial RoPE)
-├── configs/            # Configuration system
-│   ├── model/          # Model architecture configs
-│   └── training/       # Training hyperparameter configs
-├── data/               # Data loading and processing
-├── scripts/            # Training scripts
-├── tests/              # Test suite
-├── trainer/            # Training loop and utilities
-└── utils/              # Helper functions
-
-```
-
 ## Configuration
 
 All models are configured through YAML files. Example configurations are in `configs/examples/debug/`:

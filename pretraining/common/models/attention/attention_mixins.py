@@ -9,7 +9,6 @@ from torch import nn
 from torch.nn import attention as torch_attention
 from torch.nn import functional as F
 
-# Try to import FlashMLA - will be optional
 try:
     # Third Party
     from flash_mla import flash_attn_varlen_qkvpacked_func
