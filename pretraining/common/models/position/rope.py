@@ -161,21 +161,49 @@ class RoPEBase(nn.Module):
 
 class PrecomputedRoPE(RoPEBase):
     """
-    Rotary Position Embeddings (RoPE) - the standard precomputed implementation.
+    Precomputed rotary position embeddings for efficient position encoding.
 
-    Used by: Llama 3 and similar models
+    Scholarship:
+    Su et al., 2021, https://arxiv.org/abs/2104.09864
+        - introduces RoFormer and rotary position embeddings
+    Llama 3, 2024, https://arxiv.org/pdf/2407.21783
+        - uses RoPE with theta=500,000 for extended context
 
-    Variation: Precomputes all rotation matrices at initialization
-    Computation: Stores sin/cos values for all positions up to max_seq_len
-    Effect: Fast position encoding with fixed memory overhead
+    Significance:
+    Trades memory for speed by precomputing all rotations at initialization.
+    Enables O(1) position encoding during forward passes instead of computing on-the-fly.
+    Supports context extension through RoPE scaling without retraining.
 
-    The precomputation process:
-    1. At init: Compute sin/cos for all positions - trades memory for speed
-    2. At forward: Slice precomputed values - O(1) lookup instead of computation
-    3. Apply rotation - encodes relative position through dimension pair rotation
+    Init:
+    Inherits from RoPEBase and adds precomputed buffer:
+        super().__init__(dim, theta, linear_scaling)  # Sets up inverse frequencies
+        self.register_buffer("freqs_cis", self._precompute_freqs_cis(max_seq_len))  # Precomputed rotations
 
-    This approach enables efficient inference while supporting RoPE scaling
-    for context length extension beyond training.
+    Step-by-step control flow (forward):
+    1. Receive input of shape [batch, seq, heads, head_dim]
+    2. Check if position range fits within precomputed values
+    3. Slice precomputed sin/cos values for current positions
+    4. Reshape input to separate dimension pairs for rotation
+    5. Apply 2D rotation to each dimension pair
+    6. Reshape back to original format
+    7. Return rotated tensor with position encoded
+
+    Learning process:
+    - This module contains no learnable parameters.
+    - All rotations are deterministic mathematical transformations.
+
+    - Precomputation strategy:
+      - At init: compute sin/cos for all positions up to max_seq_len
+      - Store as buffer (moves with model to GPU but doesn't get gradients)
+      - During forward: simple array slicing instead of trigonometric computation
+      - Result: significant speedup especially for long sequences
+
+    - Position encoding mechanism:
+      - Rotates vector pairs by position-dependent angles
+      - Different dimensions rotate at different frequencies (geometric progression)
+      - Low frequencies capture long-range dependencies
+      - High frequencies capture local position differences
+      - Result: relative position naturally emerges from dot products after rotation
     """
 
     def __init__(

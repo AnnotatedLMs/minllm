@@ -7,45 +7,63 @@ from torch.nn import functional as F
 
 class DynamicBiasLoadBalancingMixin:
     """
-    Mixin for dynamic bias adjustment to balance expert load.
-    https://arxiv.org/pdf/2412.19437
+    Mixin for auxiliary-loss-free load balancing through dynamic bias adjustment.
 
-    Based on evidence from:
-    Shazeer et al., 2017 - https://openreview.net/forum?id=B1ckMDqlg
+    Scholarship:
+    Shazeer et al., 2017, https://openreview.net/forum?id=B1ckMDqlg
         - unbalanced loads lead to collapse
-    Fedus et al., 2021, Lepikhin et al., 2021 - https://arxiv.org/abs/2101.03961 , https://openreview.net/forum?id=qrwe7XHTmYb
+    Fedus et al., 2021, https://arxiv.org/abs/2101.03961
         - traditional aux loss routing
-    Wang et al., 2024 - https://doi.org/10.48550/arXiv.2408.15664.
+    Lepikhin et al., 2021, https://openreview.net/forum?id=qrwe7XHTmYb
+        - traditional aux loss routing
+    Wang et al., 2024, https://doi.org/10.48550/arXiv.2408.15664
         - high aux loss will disrupt training
+    Deepseek-V3, 2025, https://arxiv.org/pdf/2412.19437
 
     Significance:
-    Load balancing without using auxiliary loss as the primary mechanism.
-    Bias terms automatically adjust to steer tokens away from overloaded experts.
+    Achieves load balance without disrupting training with large auxiliary losses.
+    Bias terms act like traffic signals, redirecting tokens away from busy experts.
+    Enables better model performance by avoiding the auxiliary loss trade-off.
 
     Init:
-    The bias terms are defined in AuxLossFreeMoE as:
-        self.gate_bias = nn.Parameter(torch.zeros(num_experts))
-        self.expert_load = torch.zeros(num_experts)  # Buffer for tracking load
+    The components are defined in AuxLossFreeMoE as:
+        self.gate_bias = nn.Parameter(torch.zeros(num_experts))  # Learnable routing bias
+        self.expert_load = torch.zeros(num_experts)  # Buffer for tracking cumulative load
 
-    Routing approach:
-    - Each expert has a learnable bias term added to routing scores
-    - Overloaded experts get negative bias (become less attractive)
-    - Underloaded experts get positive bias (become more attractive)
-    - Bias affects routing decisions but NOT the final gating weights
+    Step-by-step control flow (_compute_expert_load):
+    1. Receive expert indices showing which experts were selected for each token
+    2. Convert indices to one-hot encoding
+    3. Sum across batch and sequence dimensions
+    4. Return total count of tokens assigned to each expert
 
-    Step-by-step control flow:
-    1. Count how many tokens each expert received in current batch
-    2. Update running average of expert load (exponential moving average with factor 0.1)
-    3. Compare each expert's load to mean load across all experts
-    4. Decrease bias for overloaded experts by (bias_update_speed * load_imbalance)
-    5. Increase bias for underloaded experts by (bias_update_speed * load_imbalance)
+    Step-by-step control flow (_update_load_balancing_bias):
+    1. Count how many tokens went to each expert in current batch
+    2. Update running average of expert load (blend 90% old, 10% new)
+    3. Calculate mean load across all experts
+    4. Find load imbalance for each expert (actual - mean)
+    5. Adjust bias: decrease for overloaded, increase for underloaded
 
     Learning process:
-    - No gradients flow through bias adjustments (uses torch.no_grad())
-    - Bias values evolve based on load statistics, not loss gradients
-    - System finds equilibrium where all experts get similar load
+    - This mixin contains learnable parameters but they don't learn through gradients.
 
-    Used by: DeepSeek-V3's AuxLossFreeMoE
+    - Gate bias (self.gate_bias: nn.Parameter):
+      - Does NOT receive gradients from the loss (wrapped in torch.no_grad())
+      - Updates based on load statistics, not backpropagation
+      - Overloaded expert: bias decreases by (update_speed * excess_load)
+      - Underloaded expert: bias increases by (update_speed * deficit_load)
+      - Result: bias values self-adjust to equalize expert usage
+
+    - Load tracking (self.expert_load: Buffer):
+      - Maintains exponential moving average of expert usage
+      - Smooths out batch-to-batch variations
+      - Provides stable signal for bias adjustments
+      - Result: system reaches equilibrium where all experts process similar loads
+
+    - System dynamics:
+      - No gradient interference with model learning
+      - Pure algorithmic load balancing, not learned
+      - Bias only affects routing selection, not expert weights
+      - Result: achieves balance without sacrificing model quality
     """
 
     def _compute_expert_load(

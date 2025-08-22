@@ -10,6 +10,20 @@
 
   But I provide it here in case anyone else finds this useful.
 
+## Reference Guide
+If you're just interested in treating this as a reference guide, you'll still need to follow the installation instructions below to enable the repo navigation.
+
+But if you just want to read the implmenetations, I recommend starting from
+`pretraining/common/models/architectures`
+
+From any of the modules, you'll see the architectures at a very high-level, without really diving into the different Transformer block architectures -- as will be apparent from their forward pass methods.
+
+From there, I'd recommend looking at the Transformer Block module they import -- `pretraining/common/models/blocks`. Each block will instantiate the `torch` modules it needs, with mixins that encapsulate how those modules are actually used in the forward pass.
+
+Similarly, when it comes to the different attentnion implementations in `pretraining/common/models/attention`, each attention module will follow this pattern -- instantiating the modules it needs while grouping the forward pass operations into mixins.
+
+Again, all of this is very opinionated organization and is primarily geared towards personal use.
+
 ## Installation Guide
 
 ### Prerequisites
@@ -66,23 +80,19 @@ cd ..
 uv sync --no-dev
 ```
 
-  Directory Structure
+## Data Setup
+- Borrowed a script from KellerJordan/modded-nanogpt
+- Download a subset of fineweb to use with the pretraining scripts
 
-  minllm/
-  ├── papers/              # Research paper summaries and notes
-  │   ├── data/           # Data processing and corpus papers
-  │   ├── posttraining/   # Instruction and preference tuning papers
-  │   └── pretraining/    # Core transformer architecture papers
-  ├── pretraining/        # Core pretraining implementation
-  │   ├── common/         # Shared PyTorch modules and patterns
-  │   │   ├── base/      # Base classes for LLM components
-  │   │   └── patterns/  # Reusable architectural patterns
-  │   ├── configs/       # Model and training configurations
-  │   ├── data/          # Data loading and processing utilities
-  │   ├── trainer/       # Training loop implementation
-  │   └── utils/         # Training utilities (distributed, checkpointing, etc.)
-  ├── posttraining/       # Fine-tuning implementations
-  │   └── instruction_tuning/  # SFT (Supervised Fine-Tuning) implementation
+```
+# downloads only the first 800M training tokens to save time
+uv run pretraining.data.sample.cached_fineweb 8
+```
+
+## Implementation Legend
+✅ Means I have implemented it, and I'm able to do runs with it
+⚠️ Means I have implmeneted it, and I'm planning to test it in the nearish future
+❌ Means I want to implement it, and I'd like to get to it at some point.
 
 ## Supported Models
 
@@ -122,7 +132,7 @@ MIT License
   - https://github.com/allenai/open-instruct
   - https://github.com/KellerJordan/modded-nanogpt
 
-I reorganized a lot of their code, annotated stuff, and invariably made it worse to use -- but easier (for me) to read.
+Really, a mix of Kaparthy, AI2, Raschka. But instead of hopping around a bunch of different guides, I just really wanted a centralized place where I could see all of the stuff together. I reorganized a lot of their code, annotated stuff, and invariably made it worse to use -- but easier (for me) to read.
 
 ## Understanding pyproject.toml
 

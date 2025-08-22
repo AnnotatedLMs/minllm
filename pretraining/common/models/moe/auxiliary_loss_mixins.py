@@ -6,38 +6,50 @@ from torch.nn import functional as F
 
 class AuxiliaryLossMixin:
     """
-    Mixin for computing auxiliary loss for MoE load balancing.
+    Mixin for complementary sequence-wise balance loss computation.
 
-    Derived from:
-    Deepseek-V3, https://arxiv.org/pdf/2412.19437 Section 2.1.2
+    Scholarship:
+    Deepseek-V3, 2025, https://arxiv.org/pdf/2412.19437
 
     Significance:
-    Complementary sequence-wise balance loss to prevent extreme imbalance within single sequences.
-    Uses "extremely small" alpha factor (0.001) to minimally affect training.
+    Provides safety net against extreme within-sequence imbalance.
+    Uses tiny alpha (0.001) to avoid disrupting main training dynamics.
+    Acts as backup when bias-based balancing isn't enough.
 
     Init:
-    No initialization needed - pure computation mixin.
+    This mixin has no initialization. It's a pure computation module.
     The alpha factor is defined in AuxLossFreeMoE as:
-        self.aux_loss_alpha = 0.001
+        self.aux_loss_alpha = 0.001  # "extremely small" per paper
 
-    Routing approach:
-    - Computes imbalance between how many tokens go to each expert (f_i)
-    - And the average probability assigned to each expert (P_i)
-    - Loss encourages these to be similar (balanced load)
-
-    Step-by-step control flow:
-    1. Count actual token assignments to each expert (f_i)
-    2. Compute average probability each expert received (P_i)
-    3. Multiply f_i * P_i and sum across experts
-    4. Average across batch to get final loss value
-    5. Multiply by aux_loss_alpha (0.001) before adding to main loss
+    Step-by-step control flow (_compute_auxiliary_loss):
+    1. Convert expert indices to one-hot encoding
+    2. Count how many times each expert was selected (indicator sum)
+    3. Normalize counts to get fraction f_i for each expert
+    4. Compute normalized affinity scores s_prime for each expert
+    5. Average s_prime across sequence to get probability P_i
+    6. Compute balance loss as sum(f_i * P_i)
+    7. Average across batch for final loss value
 
     Learning process:
-    - Gradients from this loss are minimal due to tiny alpha
-    - Serves as safety mechanism for extreme imbalance cases
-    - Primary load balancing comes from bias adjustment, not this loss
+    - This mixin contains no learnable parameters.
 
-    Used by: DeepSeek-V3's AuxLossFreeMoE
+    - Loss computation:
+      - Measures discrepancy between actual usage (f_i) and intended usage (P_i)
+      - When balanced: f_i ≈ P_i for all experts, loss is minimal
+      - When imbalanced: some experts have high f_i but low P_i (or vice versa)
+      - Loss increases quadratically with imbalance severity
+
+    - Gradient effects (through aux_loss_alpha * loss):
+      - Extremely weak signal due to alpha = 0.001
+      - Slightly adjusts expert centroids to discourage extreme imbalance
+      - Does not interfere with primary learning objectives
+      - Result: prevents pathological routing patterns without harming performance
+
+    - Interaction with bias-based balancing:
+      - Bias adjustment handles most load balancing (no gradients)
+      - Auxiliary loss provides gradient-based correction for edge cases
+      - Together they ensure robust load distribution
+      - Result: system maintains balance even in challenging scenarios
     """
 
     def _compute_auxiliary_loss(

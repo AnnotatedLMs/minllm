@@ -10,19 +10,40 @@ class CachedAttentionMixin:
     """
     Mixin that adds KV cache capabilities to attention modules.
 
-    Variation: Static KV cache for efficient autoregressive generation
-    Computation: Pre-allocate cache tensors, reuse past K,V during generation
-    Effect: O(1) memory per token during generation instead of O(n)
+    Scholarship:
+    Efficiently Scaling Transformer Inference, 2022, https://arxiv.org/pdf/2211.05102
 
-    Used by: Llama3, any model requiring efficient sequential generation
+    Significance:
+    Enables O(1) memory per token during autoregressive generation instead of O(n).
+    Without caching, we'd recompute all past K/V states every generation step.
+    Static pre-allocation avoids dynamic memory allocation and OOM errors during inference.
 
-    Core operations:
-    1. Pre-allocate static buffers - reserves GPU memory for maximum sequence length
-    2. Update cache incrementally - stores new K/V states at the current position
-    3. Return accumulated states - provides full history for attention computation
+    Init:
+    This mixin has no initialization. It dynamically adds buffers when setup_cache is called:
+        self.cache_k = torch.zeros(cache_shape)  # Stores accumulated key states
+        self.cache_v = torch.zeros(cache_shape)  # Stores accumulated value states
+        self.cache_position = torch.zeros(1)     # Tracks current position in cache
 
-    The cache enables O(1) token generation instead of O(n) by avoiding recomputation
-    of past key/value states during autoregressive decoding.
+    Step-by-step control flow (setup_cache):
+    1. Pre-allocate static buffers for maximum sequence length
+    2. Register K and V cache tensors as buffers (not parameters)
+    3. Initialize position tracker to zero
+
+    Step-by-step control flow (update_kv_cache_with_transpose):
+    1. Transpose K/V from attention format [batch, heads, seq, dim] to cache format
+    2. Insert new K/V states at current position in cache
+    3. Return accumulated K/V up to current position
+    4. Transpose back to attention format for computation
+
+    Learning process:
+    - This mixin contains no learnable parameters
+    - Cache buffers store computed activations, not learned weights
+
+    - Operational benefits:
+      - Avoids recomputing K/V for all previous tokens on each generation step
+      - Reduces memory bandwidth: only load new K/V instead of full sequence
+      - Enables efficient incremental generation for long sequences
+      - Pre-allocation prevents latency spikes from dynamic memory allocation
     """
 
     def setup_cache(

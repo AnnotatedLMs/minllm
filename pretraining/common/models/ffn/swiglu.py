@@ -12,19 +12,63 @@ from pretraining.common.models.ffn import activation_mixin
 
 class SwiGLU(nn.Module, activation_mixin.ActivationMixin):
     """
-    SwiGLU (Swish-Gated Linear Unit) feedforward network.
-    https://arxiv.org/pdf/2002.05202v1
+    Gated feedforward network using element-wise multiplication for adaptive computation.
 
-    Variation: Gated activation function with learnable gating
-    Computation: silu(gate_proj(x)) * up_proj(x) → down_proj
-    Effect: More expressive than standard MLP, allows model to selectively amplify or suppress features
+    Scholarship:
+    Quoc et al., 2017, https://arxiv.org/pdf/1710.05941
+        - introduces swish activation
+    Shazeer, 2020, https://arxiv.org/pdf/2002.05202v1
+        - demonstrates swiglu performance in transformers
+    Deepseek-V3, 2025, https://arxiv.org/pdf/2412.19437
+        - caches SwiGLU inputs and recomputes in backward pass for memory efficiency
 
-    Variation: 2/3 expansion ratio to maintain parameter count
-    Computation: When using gating, intermediate_dim = (2/3) * 4 * hidden_dim to match standard MLP params
-    Effect: Despite gating overhead, maintains similar parameter budget as standard MLP
+    Significance:
+    Lets the network learn which features to amplify or suppress through gating.
+    More expressive than standard MLP while maintaining similar parameter count.
+    Gate values act like attention weights but for individual features rather than tokens.
 
-    The gating mechanism enables the model to learn which features to emphasize,
-    providing a form of adaptive computation that improves model expressiveness.
+    Init:
+    The three projection layers are defined as:
+        self.gate_proj = nn.Linear(hidden_dim, intermediate_dim, bias=bias)  # Produces gate values
+        self.up_proj = nn.Linear(hidden_dim, intermediate_dim, bias=bias)    # Produces features
+        self.down_proj = nn.Linear(intermediate_dim, hidden_dim, bias=bias)  # Projects back
+        self.activation = silu (typically)  # Applied to gate only
+
+    Step-by-step control flow (forward):
+    1. Receive input of shape [batch, seq_len, hidden_dim]
+    2. Project input through gate_proj and apply activation (silu)
+    3. Project same input through up_proj (no activation)
+    4. Multiply activated gate with up projection element-wise
+    5. Project gated features back to hidden_dim through down_proj
+    6. Apply dropout if specified
+    7. Return output of shape [batch, seq_len, hidden_dim]
+
+    Learning process:
+    - Gate projection (self.gate_proj: nn.Linear):
+      - Learns to produce gate values between 0 and ~1 (after silu)
+      - When model makes mistakes: gradients flow back through multiplication
+      - If feature was helpful but gated off: gate weights increase for that pattern
+      - If feature was harmful but let through: gate weights decrease for that pattern
+      - Result: learns to identify which input patterns should control feature flow
+
+    - Up projection (self.up_proj: nn.Linear):
+      - Learns to produce candidate features for gating
+      - Gradients modulated by gate values during backprop
+      - Features with high gates get stronger gradient signals
+      - Features with low gates get weaker gradient signals
+      - Result: learns representations that work well with learned gating patterns
+
+    - Down projection (self.down_proj: nn.Linear):
+      - Learns to combine gated features back into model dimension
+      - Receives gradients from next layer's loss
+      - Adjusts to produce useful representations for downstream tasks
+      - Result: learns optimal mixing of intermediate features
+
+    - Gating dynamics:
+      - Element-wise multiplication creates feature-level attention
+      - Smooth gating (via silu) allows gradient flow even for partially closed gates
+      - Network learns complementary gate and feature representations
+      - Result: adaptive computation that amplifies relevant features per token
     """
 
     def __init__(

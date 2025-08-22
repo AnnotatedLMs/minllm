@@ -14,25 +14,34 @@ from pretraining.common.models.position import rope
 
 class Llama3TransformerBlock(nn.Module):
     """
-    Llama 3 specific transformer block.
+    Llama 3 transformer block - Efficient architecture with GQA and SwiGLU.
+    RoPE: Su et al., 2021, https://arxiv.org/abs/2104.09864
+    GQA: Ainslie et al., 2023, https://arxiv.org/pdf/2305.13245
+    Llama 3, 2024, https://arxiv.org/pdf/2407.21783
 
-    Architecture:
-    - RMSNorm without bias (more efficient than LayerNorm)
-    - Grouped Query Attention (GQA) for memory efficiency
-    - RoPE for position encoding
-    - SwiGLU activation in FFN
-    - No biases anywhere
+    Step-by-step control flow (how modules work together):
+    1. RMSNorm: Normalize by RMS, scale with learned weight (no bias)
+    2. GroupedQueryAttention: Project Q/K/V with fewer KV heads
+    3. PrecomputedRoPE: Apply rotary embeddings to Q and K
+    4. Attention: Compute causal attention with KV head repetition
+    5. Residual: Add attention output to original input
+    6. RMSNorm: Normalize attention output
+    7. SwiGLU: Gate-modulated FFN with element-wise multiplication
+    8. Residual: Add SwiGLU output to attention residual
 
-    The Llama 3 pattern:
-    1. RMSNorm → GQA with RoPE → Residual
-    2. RMSNorm → SwiGLU FFN → Residual
+    Learning process (what learns and how):
+    - RMSNorm: Learns single scale parameter (no bias for efficiency)
+    - GroupedQueryAttention: Q/K/V/O projections learn, K/V share across groups
+    - PrecomputedRoPE: NO learning - fixed sinusoidal rotations
+    - SwiGLU: Three projections learn (gate, up, down)
+    - No biases: Reduces parameters without quality loss
 
-    Key characteristics:
-    - Designed for efficiency at scale
-    - GQA reduces KV cache memory (e.g., 32 query heads, 8 KV heads)
-    - SwiGLU provides better performance than GELU
-    - RoPE enables long context via position interpolation
-    - No position embeddings at block level (RoPE applied during attention)
+    Key architectural choices:
+    - GQA with 8 KV heads: 4x memory reduction vs full MHA
+    - RoPE with θ=500,000: Enables 32K+ context windows
+    - SwiGLU: Better than ReLU/GELU through learnable gating
+    - RMSNorm: Simpler than LayerNorm, equally effective
+    - No biases: Cleaner gradients, fewer parameters
     """
 
     def __init__(

@@ -27,21 +27,37 @@ class GPT2(
     generation_mixins.AutoregressiveGenerationMixin,
 ):
     """
-    GPT-2 Language Model implementation.
+    GPT-2 language model - Autoregressive transformer with learned position embeddings.
+    Radford et al., 2019, https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf
 
-    Used by: GPT-2
+    Step-by-step control flow (model-level orchestration):
+    1. Token embedding: Convert token IDs to dense vectors
+    2. Position embedding: Add learned position embeddings
+    3. Embedding dropout: Apply dropout for regularization
+    4. Transformer blocks: N layers of GPT2TransformerBlock
+    5. Final LayerNorm: Normalize final hidden states
+    6. Output projection: Use tied embeddings (transposed) for logits
 
-    Variation: Token embeddings + learned position embeddings
-    Computation: Embeddings are added together before entering transformer
-    Effect: Model learns fixed positional patterns up to max sequence length
+    Learning components (what learns across the model):
+    - Token embeddings: Learn semantic representations for each token
+    - Position embeddings: Learn absolute position patterns up to max_seq_len
+    - GPT2TransformerBlocks: Each contains learnable MHA and MLP layers
+    - Final LayerNorm: Learns scale and bias for output normalization
+    - Weight tying: Token embeddings serve dual purpose (input and output)
 
-    Variation: Uses BiasedLNTransformerBlock with standard MHA and MLP
-    Computation: LayerNorm with bias, full attention heads, 4x MLP expansion
-    Effect: Each head learns independent attention patterns with smooth non-linearity
+    Key architectural choices:
+    - Learned position embeddings: Fixed max length but learnable patterns
+    - Weight tying: Reduces parameters by ~30M for 50K vocab
+    - Biases everywhere: Additional flexibility vs modern bias-free designs
+    - Pre-norm architecture: Better gradient flow than post-norm
+    - GELU activation: Smoother than ReLU for language modeling
 
-    Variation: Tied embeddings for output projection
-    Computation: lm_head shares weights with token_embeddings
-    Effect: Reduces parameters and improves sample efficiency
+    Mixin contributions:
+    - PositionIDGenerationMixin: Creates position IDs for learned embeddings
+    - TransformerBlockStackMixin: Applies blocks with optional hidden states
+    - TransformerWeightInitMixin: Scaled init with special residual handling
+    - AutoregressiveGenerationMixin: Standard left-to-right generation
+    - FSDPMixin: Enables efficient distributed training
     """
 
     def __init__(

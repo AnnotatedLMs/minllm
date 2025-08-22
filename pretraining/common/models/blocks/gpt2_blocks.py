@@ -13,22 +13,28 @@ from pretraining.common.models.ffn import mlp
 
 class GPT2TransformerBlock(nn.Module):
     """
-    GPT-2 specific transformer block.
+    GPT-2 transformer block - Pre-norm architecture with biases throughout.
+    Radford et al., 2019, https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf
 
-    Architecture:
-    - LayerNorm with bias (learnable scale and shift)
-    - Multi-Head Attention with bias in all projections
-    - MLP with GELU activation and 4x expansion
+    Step-by-step control flow (how modules work together):
+    1. LayerNorm: Normalize input, apply learned scale and bias
+    2. MultiHeadAttention: Project to Q/K/V, apply causal self-attention
+    3. Residual: Add attention output to original input
+    4. LayerNorm: Normalize attention output
+    5. MLP: Expand 4x with GELU, project back to hidden_dim
+    6. Residual: Add MLP output to attention residual
 
-    The GPT-2 pattern:
-    1. LayerNorm(bias=True) → MHA(bias=True) → Residual
-    2. LayerNorm(bias=True) → MLP(GELU, bias=True) → Residual
+    Learning process (what learns and how):
+    - LayerNorm: Learns scale (γ) and bias (β) to normalize and shift distributions
+    - MultiHeadAttention: Q/K/V/O projections learn via backprop
+    - MLP: Two linear layers learn feature transformations
+    - All biases: Provide additional learnable offsets for flexibility
 
-    Key characteristics:
-    - Uses biases throughout for additional learnable parameters
-    - GELU activation for smoother gradients
-    - Standard 4x hidden dimension expansion in MLP
-    - No position embeddings in the block itself (handled at model level)
+    Key architectural choices:
+    - Pre-norm: Stabilizes training by normalizing before transformations
+    - GELU: Smoother than ReLU, enables better gradient flow
+    - Biases everywhere: More parameters for expressiveness
+    - 4x MLP expansion: transformer hidden layer sizing
     """
 
     def __init__(

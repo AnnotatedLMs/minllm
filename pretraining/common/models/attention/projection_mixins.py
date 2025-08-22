@@ -83,13 +83,59 @@ class FusedQKVProjectionMixin:
 
 class GroupedQKVProjectionMixin:
     """
-    Mixin that provides grouped QKV projection for memory-efficient attention.
+    Mixin for memory-efficient QKV projections with shared key-value heads.
 
-    Variation: Separate projections with different dimensions for K/V
-    Computation: Q gets full dimension, K/V get reduced dimension
-    Effect: Reduces KV cache memory by num_heads/num_kv_heads factor
+    Scholarship:
+    Ainslie et al., 2023, https://arxiv.org/pdf/2305.13245
+        - introduces grouped-query attention
+    Llama 3, 2024, https://arxiv.org/pdf/2407.21783
+        - uses 8 KV heads for all model sizes
 
-    Used by: Grouped Query Attention (Llama 3, etc.)
+    Significance:
+    Reduces memory bandwidth bottleneck by having fewer KV heads than Q heads.
+    Each KV pair serves multiple queries, cutting cache size without hurting quality.
+    Enables longer context windows and larger batch sizes during inference.
+
+    Init:
+    The projection layers are defined in GroupedQueryAttention as:
+        self.q_proj = nn.Linear(hidden_dim, hidden_dim, bias=bias)  # Full heads
+        self.k_proj = nn.Linear(hidden_dim, num_kv_heads * head_dim, bias=bias)  # Fewer heads
+        self.v_proj = nn.Linear(hidden_dim, num_kv_heads * head_dim, bias=bias)  # Fewer heads
+
+    Step-by-step control flow (_compute_grouped_qkv_projections):
+    1. Receive input of shape [batch, seq_len, hidden_dim]
+    2. Project to queries with full dimension (num_heads * head_dim)
+    3. Project to keys with reduced dimension (num_kv_heads * head_dim)
+    4. Project to values with same reduced dimension as keys
+    5. Return Q, K, V with different dimensions
+
+    Learning process:
+    - Query projection (self.q_proj: nn.Linear):
+      - Learns to create distinct query vectors for each attention head
+      - When predictions fail: gradients signal queries aren't finding right information
+      - Weight matrix adjusts to produce queries that better distinguish relevant tokens
+      - Each of the num_heads gets unique query patterns
+      - Result: learns specialized query transformations for each head's role
+
+    - Key projection (self.k_proj: nn.Linear):
+      - Learns to create shared keys that work for multiple query heads
+      - When attention is wrong: gradients signal keys don't differentiate tokens well
+      - Weight matrix adjusts to produce keys that capture broadly useful distinctions
+      - Must balance specificity with generality since each key serves n_rep queries
+      - Result: learns compressed but informative key representations
+
+    - Value projection (self.v_proj: nn.Linear):
+      - Learns to extract information that multiple heads will aggregate
+      - When outputs are wrong: gradients signal values lack necessary content
+      - Weight matrix adjusts to pack more useful information per value vector
+      - Pressure to be efficient since fewer values must serve all queries
+      - Result: learns to compress token information efficiently
+
+    - Trade-off dynamics:
+      - Fewer KV heads means each must be more general/reusable
+      - Sharing forces KV to learn universal features rather than head-specific ones
+      - Q heads can still specialize since they're not shared
+      - Result: memory savings with minimal quality loss
     """
 
     def _compute_grouped_qkv_projections(

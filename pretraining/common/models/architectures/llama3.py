@@ -23,25 +23,41 @@ class Llama3(
     generation_mixins.CachedGenerationMixin,
 ):
     """
-    Llama 3 Language Model implementation.
+    Llama 3 language model - Efficient architecture with GQA and RoPE.
+    Llama 3 Team, 2024, https://arxiv.org/pdf/2407.21783
 
-    Used by: Llama 3 family
+    Step-by-step control flow (model-level orchestration):
+    1. Token embedding: Convert token IDs to dense vectors
+    2. Transformer blocks: N layers of Llama3TransformerBlock
+       - Each block: RMSNorm → GQA (with RoPE) → RMSNorm → SwiGLU
+    3. Final RMSNorm: Normalize final hidden states
+    4. Output projection: Separate lm_head (no weight tying)
 
-    Variation: Token embeddings only with RoPE applied in attention
-    Computation: No position embeddings added to input, RoPE rotates Q/K vectors
-    Effect: Model learns relative positions that generalize to any sequence length
+    Learning components (what learns across the model):
+    - Token embeddings: Learn semantic representations for each token
+    - PrecomputedRoPE: NO learning - fixed sinusoidal rotations
+    - Llama3TransformerBlocks: Each contains learnable GQA and SwiGLU
+    - Final RMSNorm: Learns single scale parameter (no bias)
+    - Output projection: Separate linear layer learns output mappings
 
-    Variation: RMSNorm without bias, GQA, and SwiGLU
-    Computation: Simpler normalization, shared KV heads, gated FFN
-    Effect: Reduces memory and computation while maintaining model quality
+    Key architectural choices:
+    - GQA with 8 KV heads: 4x memory reduction during inference
+    - RoPE with θ=500,000: Supports 32K+ context without retraining
+    - SwiGLU activation: Better performance through gating mechanism
+    - No biases: Cleaner optimization, ~10M fewer parameters
+    - RMSNorm: Simpler than LayerNorm, equally effective
+    - Separate lm_head: Better scaling than weight tying
 
-    Variation: No bias terms in any linear layers
-    Computation: All nn.Linear layers have bias=False
-    Effect: Improves training stability and slightly reduces parameters
+    Mixin contributions:
+    - TransformerBlockStackMixin: Applies blocks with position offset support
+    - CachedGenerationMixin: Efficient KV-cached autoregressive generation
+    - FSDPMixin: Enables efficient distributed training
+    - No weight init mixin: Pytorch defaults work well for this architecture
 
-    Variation: Separate lm_head (no weight tying)
-    Computation: Independent output projection matrix
-    Effect: More parameters but often better performance at scale
+    Memory optimizations:
+    - GQA reduces KV cache from O(n·h·d) to O(n·h/g·d) where g=4
+    - PrecomputedRoPE: O(1) position encoding via precomputed tables
+    - Flash attention compatible for additional memory savings
     """
 
     def __init__(
@@ -77,7 +93,6 @@ class Llama3(
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads
 
-        # Token embeddings (no position embeddings in Llama)
         self.token_embeddings = nn.Embedding(
             num_embeddings=vocab_size,
             embedding_dim=hidden_dim,
@@ -90,7 +105,6 @@ class Llama3(
             linear_scaling=linear_scaling,
         )
 
-        # Transformer blocks
         self.blocks: nn.ModuleList[llama3_blocks.Llama3TransformerBlock] = nn.ModuleList(
             [
                 llama3_blocks.Llama3TransformerBlock(
@@ -109,14 +123,8 @@ class Llama3(
             ]
         )
 
-        # Final RMSNorm
         self.ln_f = nn.RMSNorm(hidden_dim, eps=norm_eps)
-
-        # Output projection - separate (not tied like GPT-2)
         self.lm_head = nn.Linear(hidden_dim, vocab_size, bias=lm_head_bias)
-
-        # Note: PyTorch's default initialization is fine for Llama3
-        # No special weight initialization needed
 
     @classmethod
     def from_config(cls, config: llama.Llama3Config) -> "Llama3":
@@ -180,21 +188,14 @@ class Llama3(
             attention_mask: Optional attention mask for padding
             position_offset: Position offset for RoPE (used during generation with KV cache)
         """
-        # Token embeddings only (no position embeddings)
         x = self.token_embeddings(input_ids)
-
-        # Apply transformer blocks with RoPE handled internally
         hidden_states, _ = self._apply_transformer_blocks(
             x,
             blocks=self.blocks,
             attention_mask=attention_mask,
             position_offset=position_offset,
         )
-
-        # Final layer norm
         hidden_states = self.ln_f(hidden_states)
-
-        # Output projection
         logits = self._compute_logits(hidden_states)
 
         return outputs.ForwardOutput(logits=logits)

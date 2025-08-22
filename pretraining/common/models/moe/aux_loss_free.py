@@ -23,32 +23,31 @@ class AuxLossFreeMoE(
     expert_mixins.SharedExpertMixin,
 ):
     """
-    DeepSeek-V3 MoE implementation - Auxiliary Loss Free Mixture of Experts.
-    https://arxiv.org/pdf/2412.19437
-
-    Derived from:
-    - DeepSeekMOE, 2024, https://arxiv.org/pdf/2401.06066,
-    - DeepseekV2, 2024, https://arxiv.org/pdf/2405.04434, Section 2.2
+    Auxiliary-Loss-Free Mixture of Experts - Load balancing through dynamic bias adjustment.
+    Deepseek-V3, 2025, https://arxiv.org/pdf/2412.19437 Section 2.1.2
 
     Step-by-step control flow (how mixins work together):
-    1. SharedExpertMixin: ALL tokens go through shared expert first (baseline processing)
-    2. CentroidRoutingMixin: Compute how similar each token is to each expert's specialty
-    3. DynamicBiasLoadBalancingMixin: Add bias to steer tokens away from busy experts
-    4. CentroidRoutingMixin: Pick top-k experts based on biased scores
-    5. CentroidRoutingMixin: Get clean weights from original scores (no bias)
-    6. ExpertManagementMixin: Send tokens to selected experts, combine outputs
-    7. DynamicBiasLoadBalancingMixin: Update bias values for next batch
-    8. AuxiliaryLossMixin: Compute tiny loss term as safety check
+    1. SharedExpertMixin: Process all tokens through shared expert (baseline)
+    2. CentroidRoutingMixin: Compute affinity scores between tokens and expert centroids
+    3. DynamicBiasLoadBalancingMixin: Add routing bias to balance load
+    4. CentroidRoutingMixin: Select top-k experts based on biased scores
+    5. CentroidRoutingMixin: Extract clean affinity scores for selected experts
+    6. CentroidRoutingMixin: Normalize scores to get gating weights
+    7. ExpertManagementMixin: Route tokens to experts, apply weights, combine
+    8. DynamicBiasLoadBalancingMixin: Update bias based on load statistics
+    9. AuxiliaryLossMixin: Compute sequence-wise balance loss (alpha=0.001)
 
     Learning process (how each mixin affects training):
-    - SharedExpertMixin: Learns via normal backprop, sees all tokens
-    - CentroidRoutingMixin: Expert centroids learn to attract suitable tokens (backprop)
-    - DynamicBiasLoadBalancingMixin: NO learning - just adjusts routing bias
-    - ExpertManagementMixin: Each expert learns from its assigned tokens (backprop)
-    - AuxiliaryLossMixin: Tiny gradient signal (alpha=0.001) for extreme cases
+    - SharedExpertMixin: Shared expert learns general patterns via backprop
+    - CentroidRoutingMixin: Expert centroids learn token affinities via backprop
+    - DynamicBiasLoadBalancingMixin: NO learning - algorithmic bias adjustment
+    - ExpertManagementMixin: Routed experts learn specialized patterns via backprop
+    - AuxiliaryLossMixin: Minimal gradient signal for extreme imbalance cases
 
-    The "auxiliary-loss-free" name means load balancing happens primarily through bias
-    adjustment (no gradients) rather than through loss terms (has gradients).
+    Key implementation detail:
+    - Bias affects routing selection but NOT gating weights (Eq. 16 in paper)
+    - Auxiliary loss uses "extremely small" alpha to avoid disrupting training
+    - Load tracking uses exponential moving average for stability
     """
 
     def __init__(

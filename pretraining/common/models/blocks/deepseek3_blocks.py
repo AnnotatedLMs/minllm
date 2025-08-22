@@ -14,19 +14,34 @@ from pretraining.common.models.position import partial_rope
 
 class DeepSeek3TransformerBlock(nn.Module):
     """
-    DeepSeek-V3 specific transformer block.
+    DeepSeek-V3 transformer block - MLA compression with auxiliary-loss-free MoE.
+    DeepSeekMoE, 2024, https://arxiv.org/pdf/2401.06066
+    Deepseek-V2, 2024, https://arxiv.org/pdf/2405.04434
+    Deepseek-V3, 2025, https://arxiv.org/pdf/2412.19437
 
-    Inspired by:
-    - Gshard (trad moe), 2021, https://openreview.net/forum?id=qrwe7XHTmYb
-    - DeepSeekMOE, 2024, https://arxiv.org/pdf/2401.06066
-    - MLA-MoE, DeepSeek-V2, 2024 - https://arxiv.org/abs/2405.04434
-        - Major difference is using expert load bias for load balancing, rather than a loss value
+    Step-by-step control flow (how modules work together):
+    1. RMSNorm: Normalize input with learned scale (no bias)
+    2. MultiHeadLatentAttention: Compress to latent, expand to Q/K/V
+    3. PartialRoPE: Apply rotation only to position features
+    4. Attention: Compute with separated content and position
+    5. Residual: Add attention output to original input
+    6. RMSNorm: Normalize for MoE layer
+    7. AuxLossFreeMoE: Route tokens to experts with bias-based balancing
+    8. Residual: Add MoE output to attention residual
 
-    Architecture:
-    - RMSNorm without bias
-    - Multi-head Latent Attention (MLA) with compression
-    - Partial RoPE on position-only features
-    - Auxiliary-loss-free MoE instead of FFN
+    Learning process (what learns and how):
+    - RMSNorm: Learns scale parameter for normalization
+    - MLA: Compression and expansion projections learn via backprop
+    - PartialRoPE: NO learning - fixed rotations on position dims
+    - AuxLossFreeMoE: Expert centroids and expert networks learn
+    - Load balancing: Bias adjustment without gradients (auxiliary-loss-free)
+
+    Key architectural choices:
+    - MLA: 4x compression reduces attention memory and compute
+    - Partial RoPE: Separates content/position for better compression
+    - Aux-loss-free MoE: Load balance without disrupting gradients
+    - Shared experts: Capture common patterns, routed experts specialize
+    - No biases: Cleaner optimization, fewer parameters
     """
 
     def __init__(

@@ -10,43 +10,53 @@ from torch.nn import functional as F
 
 class CentroidRoutingMixin:
     """
-    Mixin for Deepseek3 centroid-based expert routing.
-    https://arxiv.org/pdf/2412.19437
+    Mixin for centroid-based expert routing using learned expert representations.
+
+    Scholarship:
+    DeepSeekMoE, 2024, https://arxiv.org/pdf/2401.06066
+    Deepseek-V2, 2024, https://arxiv.org/pdf/2405.04434
+    Deepseek-V3, 2025, https://arxiv.org/pdf/2412.19437
 
     Significance:
-    *Each* expert has a learned "centroid" vector representing what kind of tokens it specializes in.
-    Tokens are routed to experts based on similarity to these centroids.
+    Enables fine-grained expert specialization by learning what each expert is good at.
+    Centroids act as learnable "signatures" that attract tokens with similar patterns.
+    Unlike hard routing, uses soft weighted combinations for smoother gradients.
 
     Init:
     The centroids are defined in AuxLossFreeMoE as:
         self.expert_centroids = nn.Parameter(torch.randn(num_experts, hidden_dim))
 
-    Routing approach:
-    - One centroid vector per expert (shape: [num_experts, hidden_dim])
-    - Centroids are nn.Parameters initialized randomly, learned via backprop
-    - Affinity score = sigmoid(token · expert_centroid)
-    - Higher affinity = token is more suited for that expert
-    - "Soft" routing = experts get weighted contributions (not binary on/off)
+    Step-by-step control flow (_compute_centroid_affinity):
+    1. Receive token embeddings of shape [batch, seq_len, hidden_dim]
+    2. Compute dot product between each token and each expert centroid
+    3. Apply sigmoid to get affinity scores between 0 and 1
+    4. Return affinity matrix showing how well each token matches each expert
 
-    Step-by-step control flow:
-    1. Token comes in with hidden_dim dimensions
-    2. Compute affinity to ALL experts: sigmoid(token @ expert_centroid.T)
-    3. Add bias to scores for load balancing (negative for overused experts, positive for underused)
-    4. Select top-k experts based on BIASED scores
-    5. Extract ORIGINAL affinity scores for those selected experts
-    6. Normalize those scores to sum to 1 (these become the weights)
-    7. Send token to each selected expert, multiply outputs by weights, sum them up
+    Step-by-step control flow (_select_top_k_experts):
+    1. Receive scores (usually biased for load balancing)
+    2. Select k highest-scoring experts for each token
+    3. Return both the top-k scores and their indices
+
+    Step-by-step control flow (_normalize_expert_weights):
+    1. Receive raw affinity scores for selected experts
+    2. Sum the scores for each token
+    3. Divide each score by the sum to get weights that sum to 1
+    4. Return normalized weights for combining expert outputs
 
     Learning process:
-    - Each expert's centroid learns through gradient descent from the language modeling loss
-    - When an expert processes tokens well (low loss), its centroid gets updated to attract
-      similar tokens in the future
-    - When an expert processes tokens poorly (high loss), its centroid gets updated to repel
-      similar tokens
-    - Over time, each expert's centroid evolves to represent a specific type of content/pattern
-      that the expert has learned to handle well
+    - Expert centroids (self.expert_centroids: nn.Parameter):
+      - Learn to represent what kind of tokens each expert processes well
+      - When a token is misclassified: loss increases, producing gradients
+      - Gradients flow back through the sigmoid and dot product operations
+      - If expert helped: centroid moves closer to tokens it processed (positive gradient)
+      - If expert hurt: centroid moves away from tokens it processed (negative gradient)
+      - Result: each centroid becomes a learned representation of its expert's specialty
 
-    Used by: DeepSeek-V3's AuxLossFreeMoE
+    - Routing decisions:
+      - Higher affinity scores lead to higher expert weights
+      - Experts that reduce loss get stronger affinity to similar future tokens
+      - Experts that increase loss get weaker affinity to similar tokens
+      - Result: tokens naturally flow to experts that handle them well
     """
 
     def _compute_centroid_affinity(

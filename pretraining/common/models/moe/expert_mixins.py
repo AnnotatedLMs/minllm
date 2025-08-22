@@ -6,38 +6,55 @@ from torch import nn
 
 class ExpertManagementMixin:
     """
-    Mixin for creating and managing expert networks.
+    Mixin for routing tokens to experts and combining their outputs.
+
+    Scholarship:
+    DeepSeekMoE, 2024, https://arxiv.org/pdf/2401.06066
+    Deepseek-V2, 2024, https://arxiv.org/pdf/2405.04434
+    Deepseek-V3, 2025, https://arxiv.org/pdf/2412.19437
 
     Significance:
-    Routes tokens to selected experts and combines their outputs.
-    Handles the actual computation of expert outputs and weighted aggregation.
+    Manages the actual expert computation and weighted aggregation.
+    Enables fine-grained specialization by routing tokens to multiple experts.
+    Efficient batched processing despite irregular routing patterns.
 
     Init:
     The experts are defined in AuxLossFreeMoE as:
-        self.experts = nn.ModuleList([SwiGLU(...) for _ in range(num_experts)])
+        self.experts = nn.ModuleList([
+            SwiGLU(hidden_dim, intermediate_dim, ...)
+            for _ in range(num_experts)
+        ])
 
-    Routing approach:
-    - Each token is processed by its selected experts
-    - Expert outputs are weighted by normalized affinity scores
-    - Final output is weighted sum of expert outputs
-
-    Step-by-step control flow:
-    1. Initialize output tensor with zeros
-    2. For each of the top-k expert positions:
-       a. Get which expert was selected for each token
-       b. Get the weight for that expert
-    3. For each expert in the model:
-       a. Find all tokens assigned to this expert
-       b. Process those tokens through the expert
-       c. Multiply by weights and add to output
-    4. Return combined output from all experts
+    Step-by-step control flow (_apply_experts_to_tokens):
+    1. Initialize output tensor with zeros (same shape as input)
+    2. Loop through each of the k expert slots (top-k positions)
+    3. Extract expert index and weight for current slot
+    4. Loop through all experts to find tokens assigned to each
+    5. Gather tokens assigned to current expert into batch
+    6. Process batch through expert's SwiGLU network
+    7. Scale expert output by routing weight
+    8. Add weighted output back to corresponding positions
 
     Learning process:
-    - Experts learn through standard backpropagation
-    - Each expert specializes based on tokens it processes
-    - Weights come from routing decisions (centroid affinity)
+    - Expert networks (self.experts: nn.ModuleList of SwiGLU):
+      - Each expert learns through standard backpropagation
+      - When token prediction is wrong: loss produces gradients
+      - Gradients flow back through weighted combination
+      - Only experts that processed the token receive gradients
+      - Gradient magnitude scaled by routing weight (higher weight = stronger gradient)
+      - Result: each expert learns patterns specific to tokens it processes
 
-    Used by: DeepSeek-V3's AuxLossFreeMoE
+    - Specialization dynamics:
+      - Experts processing similar tokens develop similar representations
+      - Experts processing different tokens diverge in their parameters
+      - Routing weights modulate learning speed per expert
+      - Result: automatic emergence of expert specialization
+
+    - Weighted aggregation:
+      - Multiple experts contribute to each token's representation
+      - Weights determined by centroid affinity (from routing mixin)
+      - Smooth blending allows gradient flow to all selected experts
+      - Result: robust representations from ensemble of specialists
     """
 
     def _apply_experts_to_tokens(
@@ -94,33 +111,53 @@ class ExpertManagementMixin:
 
 class SharedExpertMixin:
     """
-    Mixin for shared expert that processes all tokens.
+    Mixin for shared experts that process all tokens unconditionally.
+
+    Scholarship:
+    Rajbhandari et al., 2022 (prototype concept)
+    DeepSeekMoE, 2024, https://arxiv.org/pdf/2401.06066
+    Deepseek-V2, 2024, https://arxiv.org/pdf/2405.04434
+    Deepseek-V3, 2025, https://arxiv.org/pdf/2412.19437
 
     Significance:
-    Guarantees all tokens get some expert processing, even if routing fails.
-    Acts as a baseline transformation that all tokens receive.
+    Captures common knowledge that all tokens need, reducing redundancy in routed experts.
+    Provides guaranteed baseline processing even if routing fails completely.
+    Allows routed experts to focus on specialized patterns rather than basics.
 
     Init:
     The shared expert is defined in AuxLossFreeMoE as:
-        self.shared_expert = SwiGLU(intermediate_dim=intermediate_dim * n_shared_experts)
-    Note: shared expert has n_shared_experts times the capacity of a single routed expert
+        self.shared_expert = SwiGLU(
+            hidden_dim=hidden_dim,
+            intermediate_dim=intermediate_dim * n_shared_experts,  # n_shared_experts × capacity
+            ...
+        )
 
-    Routing approach:
-    - No routing - processes ALL tokens
-    - Output scaled by shared_expert_ratio (typically 0.1)
-    - Combined additively with routed expert outputs
-
-    Step-by-step control flow:
-    1. Pass all tokens through shared expert
-    2. Scale output by shared_expert_ratio
-    3. Return scaled output (will be added to routed expert outputs)
+    Step-by-step control flow (_apply_shared_expert):
+    1. Receive input tokens of shape [batch, seq_len, hidden_dim]
+    2. Pass ALL tokens through shared expert network
+    3. Multiply output by shared_expert_ratio (typically 0.1)
+    4. Return scaled output for addition with routed expert outputs
 
     Learning process:
-    - Learns general patterns that apply to all tokens
-    - Provides stable gradient signal for all inputs
-    - Acts as regularization against routing failures
+    - Shared expert network (self.shared_expert: SwiGLU):
+      - Processes every single token in every batch
+      - When any token is mispredicted: receives gradient signal
+      - Gradients averaged across all tokens in batch
+      - Learns representations useful for most/all tokens
+      - Weight updates reflect common patterns across entire dataset
+      - Result: captures general linguistic knowledge and basic transformations
 
-    Used by: DeepSeek-V3's AuxLossFreeMoE
+    - Knowledge consolidation:
+      - Sees much more data than any single routed expert
+      - Learns robust, general-purpose representations
+      - Reduces pressure on routed experts to learn basics
+      - Result: routed experts can specialize more effectively
+
+    - Scaling factor (shared_expert_ratio):
+      - Fixed at 0.1, not learned
+      - Prevents shared expert from dominating output
+      - Ensures routed experts contribute most of the signal
+      - Result: balanced contribution between general and specialized knowledge
     """
 
     def _apply_shared_expert(

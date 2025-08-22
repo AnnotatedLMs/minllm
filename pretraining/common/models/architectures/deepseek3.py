@@ -25,13 +25,45 @@ class DeepSeek3(
     fsdp_mixins.FSDPMixin,
 ):
     """
-    DeepSeek-V3 Language Model implementation.
+    DeepSeek-V3 language model - MLA compression with auxiliary-loss-free MoE.
+    DeepSeek-V3, 2025, https://arxiv.org/pdf/2412.19437
 
-    Used by: DeepSeek-V3
+    Step-by-step control flow (model-level orchestration):
+    1. Token embedding: Convert token IDs to dense vectors
+    2. Embedding dropout: Optional regularization during training
+    3. Transformer blocks: N layers of DeepSeek3TransformerBlock
+       - Each block: RMSNorm → MLA (with PartialRoPE) → RMSNorm → AuxLossFreeMoE
+    4. Auxiliary loss collection: Gather MoE balancing losses during training
+    5. Final RMSNorm: Normalize final hidden states
+    6. Output projections: Main lm_head + multi-token prediction heads
 
-    Variation: Multi-head Latent Attention (MLA) with PartialRoPE
-    Computation: Compresses Q/K/V through bottleneck, applies RoPE to position-only features
-    Effect: Reduces activation memory while separating content and position processing
+    Learning components (what learns across the model):
+    - Token embeddings: Learn semantic representations for each token
+    - DecoupledRoPE: NO learning - fixed rotations (but YaRN-adjustable for keys)
+    - DeepSeek3TransformerBlocks: MLA projections and MoE experts learn
+    - Final RMSNorm: Learns single scale parameter
+    - Output projection: Separate linear layer for vocabulary logits
+    - MTP heads: Learn to predict multiple future tokens simultaneously
+
+    Key architectural choices:
+    - MLA: 4x compression reduces attention memory and compute
+    - Partial RoPE: Separates content/position for better compression
+    - Aux-loss-free MoE: Load balance without gradient disruption
+    - Shared + routed experts: Common patterns + specialization
+    - Multi-token prediction: Improves sample efficiency during training
+    - YaRN on keys only: Enables 128K context via two-phase extension
+
+    Mixin contributions:
+    - TransformerBlockStackMixin: Applies blocks sequentially
+    - AutoregressiveGenerationMixin: Standard left-to-right generation
+    - FSDPMixin: Enables efficient distributed training
+    - No weight init mixin: Uses default initialization
+
+    Memory optimizations:
+    - MLA reduces activation memory by 4x through compression
+    - Aux-loss-free MoE avoids auxiliary loss memory overhead
+    - Content/position separation enables aggressive KV compression
+    - FP8 quantization support for further memory reduction
     """
 
     def __init__(

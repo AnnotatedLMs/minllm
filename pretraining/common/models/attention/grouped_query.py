@@ -23,19 +23,33 @@ class GroupedQueryAttention(
     cache_mixins.CachedAttentionMixin,
 ):
     """
-    Grouped Query Attention (GQA) - Memory-efficient attention through KV sharing.
+    Grouped Query Attention (GQA) - Memory-efficient attention through key-value head sharing.
+    Ainslie et al., 2023, https://arxiv.org/pdf/2305.13245
+    Llama 3, 2024, https://arxiv.org/pdf/2407.21783
 
-    Used by: Llama 3 models
+    Step-by-step control flow (how mixins work together):
+    1. GroupedQKVProjectionMixin: Project Q to full heads, K/V to fewer heads
+    2. MultiHeadReshapeMixin: Reshape Q to [batch, n_heads, seq, head_dim]
+    3. MultiHeadReshapeMixin: Reshape K/V to [batch, n_kv_heads, seq, head_dim]
+    4. RoPE application: Rotate Q and K based on absolute positions
+    5. CachedAttentionMixin: Store/retrieve past K/V for autoregressive generation
+    6. KV repetition: Expand K/V heads to match Q heads (internal method)
+    7. ManualSDPAMixin or FlashAttentionMixin: Compute scaled dot-product attention
+    8. MultiHeadReshapeMixin: Merge heads back to flat representation
+    9. Output projection: Linear transform back to hidden_dim
 
-    Variation: Groups of query heads share the same key-value pairs
-    Computation: K and V matrices are smaller (fewer heads), then repeated to match Q heads
-    Effect: Maintains model quality while reducing memory footprint during inference
+    Learning process (how each mixin affects training):
+    - GroupedQKVProjectionMixin: Q/K/V projections learn via backprop
+    - MultiHeadReshapeMixin: NO learning - just tensor reshaping
+    - RoPE: NO learning - fixed sinusoidal position encoding
+    - CachedAttentionMixin: NO learning - just stores past states
+    - ManualSDPAMixin/FlashAttentionMixin: NO learning - computes attention
+    - Output projection: Learns to combine multi-head outputs
 
-    Variation: Uses RoPE (rotary position embeddings) instead of learned position embeddings
-    Computation: Position information is applied by rotating Q and K vectors
-    Effect: Model naturally understands relative positions and can generalize to any sequence length
-
-    See forward() for the specific flow including KV repetition and caching.
+    Key implementation detail:
+    - num_kv_heads < num_heads reduces KV cache by factor of num_heads/num_kv_heads
+    - Each KV head serves n_rep = num_heads/num_kv_heads query heads
+    - GQA-1 (single KV head) = MQA; GQA-H (equal heads) = MHA
     """
 
     def __init__(
