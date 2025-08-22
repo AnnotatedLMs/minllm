@@ -164,25 +164,6 @@ class GPT2(
         position_ids = self._get_position_ids(batch_size, seq_len, device)
         return self.position_embeddings(position_ids)
 
-    def _compute_logits(
-        self,
-        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
-        """
-        Compute output logits using tied embeddings.
-
-        GPT-2 uses weight tying: the same matrix is used for both input embeddings
-        and output projection. This differs from models like Llama3 and DeepSeek
-        which use a separate nn.Linear layer for output projection.
-
-        Tied embeddings:
-        - Input: token_id -> embedding via embedding_matrix[token_id]
-        - Output: hidden_state -> logits via hidden_state @ embedding_matrix.T
-        - Parameters: vocab_size × hidden_dim (shared)
-        """
-        # Use transposed embedding matrix for output projection
-        return torch.matmul(hidden_states, self.token_embeddings.weight.T)
-
     def forward(
         self,
         input_ids: jaxtyping.Int[torch.Tensor, "batch seq"],
@@ -215,7 +196,8 @@ class GPT2(
             final_norm=self.ln_f,
         )
 
-        logits = self._compute_logits(hidden_states)
+        logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"]
+        logits = torch.matmul(hidden_states, self.lm_head.weight.T)
 
         return outputs.ForwardOutput(logits=logits)
 
