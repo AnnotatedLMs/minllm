@@ -26,13 +26,8 @@ Clone the repository and set up the environment:
 git clone https://github.com/chengyjonathan/minllm.git
 cd minllm
 
-# Install dependencies based on your hardware:
-
-# Choose one:
-# For CPU-only development/testing:
-uv sync --extra cpu
-# For GPU training (CUDA 12.8):
-uv sync --extra cu128
+# Install dependencies (automatic based on platform):
+uv sync
 
 # Install pre-commit hooks
 uv run pre-commit install
@@ -40,26 +35,23 @@ uv run pre-commit install
 
 ### Installation Options
 
-#### CPU Installation
-For development or testing without GPU acceleration:
-```bash
-uv sync --extra cpu
-```
-- PyTorch CPU-only builds
-- All base dependencies
+#### Automatic Platform Detection
+MinLLM automatically installs the appropriate PyTorch version based on your platform:
+- **macOS/Windows**: CPU-only PyTorch builds
+- **Linux**: CUDA 12.8 PyTorch builds (for GPU support)
 
-#### GPU Installation (CUDA 12.8)
-For training with GPU acceleration:
+Simply run:
 ```bash
-uv sync --extra cu128
+uv sync
 ```
-- PyTorch with CUDA 12.8 support
-- All base dependencies
+
+#### Manual Override (if needed)
+If you need to override the automatic selection, you can modify the markers in `pyproject.toml` or manually install PyTorch after setup.
 
 ##### Optional: FlashMLA Installation (Linux + NVIDIA GPU only)
 For optimized DeepSeek3 attention on compatible GPUs (SM90/SM100):
 ```bash
-# After running uv sync --extra cu128
+# After running uv sync
 git clone https://github.com/deepseek-ai/FlashMLA.git
 cd FlashMLA
 uv pip install -v .
@@ -71,7 +63,7 @@ cd ..
 
 ```bash
 # Install only production dependencies (no dev tools)
-uv sync --no-dev --extra cpu  # or --extra cu128
+uv sync --no-dev
 ```
 
   Directory Structure
@@ -134,58 +126,46 @@ I reorganized a lot of their code, annotated stuff, and invariably made it worse
 
 ## Understanding pyproject.toml
 
-When you run `uv sync --extra gpu`, here's how the configuration works:
+When you run `uv sync`, here's how the configuration automatically selects the right PyTorch version:
 
 ### 1. Base Dependencies (always installed)
 ```toml
 [project]
 dependencies = [
-    "torch>=2.7.1",          # Always installed (source depends on extra)
+    "torch>=2.7.1",          # Always installed (source depends on platform)
     "accelerate>=1.8.1",
     "datasets>=3.6.0",
     # ... etc
 ]
 ```
 
-### 2. Optional Dependencies (activated by --extra flag)
-```toml
-[project.optional-dependencies]
-cu128 = [
-    "flash-mla",         # Only installed with --extra cu128
-]
-```
-
-### 3. Source Resolution (WHERE to get packages)
+### 2. Platform-based Source Resolution
 ```toml
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cpu", extra = "cpu" },     # Used with --extra cpu
-  { index = "pytorch-cu128", extra = "cu128" }, # Used with --extra cu128
+  { index = "pytorch-cpu", marker = "sys_platform != 'linux'" },   # macOS/Windows
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux'" }, # Linux (GPU)
 ]
 ```
-**Note:** The `extra` markers mean you MUST specify either `--extra cpu` or `--extra cu128` when running `uv sync`, otherwise torch will be installed from PyPI (default).
+**Note:** The `marker` conditions automatically select the appropriate PyTorch build based on your operating system:
+- Non-Linux systems (macOS, Windows) get CPU-only builds
+- Linux systems get CUDA 12.8 builds for GPU support
 
-### 4. Index Definitions (what index names mean)
+### 3. Index Definitions (PyTorch wheel locations)
 ```toml
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
-```
-
-### 5. Conflicts (prevent mixing incompatible extras)
-```toml
-[tool.uv]
-conflicts = [
-  [{ extra = "cpu" }, { extra = "cu128" }]  # Can't use both together
-]
+explicit = true
 ```
 
 ### Full Flow
-- `uv sync --extra cpu`: Installs torch from CPU index
-- `uv sync --extra cu128`: Installs torch from CUDA 12.8 index
-- `uv sync` alone: Would install torch from PyPI (not recommended)
+- `uv sync` on macOS/Windows: Automatically installs torch from CPU index
+- `uv sync` on Linux: Automatically installs torch from CUDA 12.8 index
+- No need to specify extras or manually select versions
 - FlashMLA: Must be manually installed for GPU users (see Installation Options)
