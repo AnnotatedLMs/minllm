@@ -7,7 +7,6 @@ import torch
 from torch import nn
 
 # Project
-from pretraining.common.mixins import architecture_mixins
 from pretraining.common.mixins import fsdp_mixins
 from pretraining.common.mixins import generation_mixins
 from pretraining.common.models import outputs
@@ -20,7 +19,6 @@ from pretraining.configs.model.components import position
 
 class DeepSeek3(
     nn.Module,
-    architecture_mixins.TransformerBlockStackMixin,
     generation_mixins.AutoregressiveGenerationMixin,
     fsdp_mixins.FSDPMixin,
 ):
@@ -54,7 +52,6 @@ class DeepSeek3(
     - YaRN on keys only: Enables 128K context via two-phase extension
 
     Mixin contributions:
-    - TransformerBlockStackMixin: Applies blocks sequentially
     - AutoregressiveGenerationMixin: Standard left-to-right generation
     - FSDPMixin: Enables efficient distributed training
     - No weight init mixin: Uses default initialization
@@ -102,7 +99,6 @@ class DeepSeek3(
     ):
         super().__init__()
 
-        # Store dimensions
         self.vocab_size = vocab_size
         self.hidden_dim = hidden_dim
         self.n_layers = n_layers
@@ -110,13 +106,11 @@ class DeepSeek3(
         self.num_heads = num_heads
         self.head_dim = head_dim
 
-        # Token embeddings
         self.token_embeddings = nn.Embedding(
             num_embeddings=vocab_size,
             embedding_dim=hidden_dim,
         )
 
-        # Dropout for embeddings
         self.embedding_dropout = nn.Dropout(dropout) if dropout > 0 else None
 
         # Key RoPE: Will have YaRN applied during context extension
@@ -131,7 +125,6 @@ class DeepSeek3(
             theta=rope_theta,
         )
 
-        # Transformer blocks
         self.blocks = nn.ModuleList(
             [
                 deepseek3_blocks.DeepSeek3TransformerBlock(
@@ -159,13 +152,10 @@ class DeepSeek3(
             ]
         )
 
-        # Final RMSNorm
         self.norm = nn.RMSNorm(hidden_dim, eps=norm_eps)
 
-        # Output projection - separate (not tied)
         self.lm_head = nn.Linear(hidden_dim, vocab_size, bias=lm_head_bias)
 
-        # Multi-token prediction heads
         self.mtp_heads = multi_token.MultiTokenPredictionHead(
             hidden_dim=hidden_dim,
             vocab_size=vocab_size,

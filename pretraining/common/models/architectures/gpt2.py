@@ -7,7 +7,6 @@ import torch
 from torch import nn
 
 # Project
-from pretraining.common.mixins import architecture_mixins
 from pretraining.common.mixins import fsdp_mixins
 from pretraining.common.mixins import generation_mixins
 from pretraining.common.mixins import weight_init_mixins
@@ -21,7 +20,6 @@ from pretraining.configs.model.architectures import gpt
 class GPT2(
     nn.Module,
     embedding_mixins.PositionIDGenerationMixin,
-    architecture_mixins.TransformerBlockStackMixin,
     fsdp_mixins.FSDPMixin,
     weight_init_mixins.TransformerWeightInitMixin,
     generation_mixins.AutoregressiveGenerationMixin,
@@ -54,7 +52,6 @@ class GPT2(
 
     Mixin contributions:
     - PositionIDGenerationMixin: Creates position IDs for learned embeddings
-    - TransformerBlockStackMixin: Applies blocks with optional hidden states
     - TransformerWeightInitMixin: Scaled init with special residual handling
     - AutoregressiveGenerationMixin: Standard left-to-right generation
     - FSDPMixin: Enables efficient distributed training
@@ -188,13 +185,11 @@ class GPT2(
         x = token_embeds + pos_embeds
         x = self.embedding_dropout(x)
 
-        hidden_states, _ = self._apply_transformer_blocks(
-            x,
-            self.blocks,
-            attention_mask=attention_mask,
-            output_hidden_states=False,
-            final_norm=self.ln_f,
-        )
+        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"] = x
+        for block in self.blocks:
+            hidden_states = block(hidden_states, attention_mask=attention_mask)
+
+        hidden_states = self.ln_f(hidden_states)
 
         logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"]
         logits = torch.matmul(hidden_states, self.lm_head.weight.T)

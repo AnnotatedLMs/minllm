@@ -7,7 +7,6 @@ import torch
 from torch import nn
 
 # Project
-from pretraining.common.mixins import architecture_mixins
 from pretraining.common.mixins import fsdp_mixins
 from pretraining.common.mixins import generation_mixins
 from pretraining.common.models import outputs
@@ -18,7 +17,6 @@ from pretraining.configs.model.architectures import llama
 
 class Llama3(
     nn.Module,
-    architecture_mixins.TransformerBlockStackMixin,
     fsdp_mixins.FSDPMixin,
     generation_mixins.CachedGenerationMixin,
 ):
@@ -154,18 +152,6 @@ class Llama3(
             lm_head_bias=config.output_head.lm_head_bias,
         )
 
-    def _compute_logits(
-        self,
-        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"],
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq vocab"]:
-        """
-        Compute output logits using separate lm_head.
-
-        Llama 3 uses a separate output projection (not tied embeddings like GPT-2).
-        This allows the model to learn different representations for input and output.
-        """
-        return self.lm_head(hidden_states)
-
     def forward(
         self,
         input_ids: jaxtyping.Int[torch.Tensor, "batch seq"],
@@ -189,14 +175,17 @@ class Llama3(
             position_offset: Position offset for RoPE (used during generation with KV cache)
         """
         x = self.token_embeddings(input_ids)
-        hidden_states, _ = self._apply_transformer_blocks(
-            x,
-            blocks=self.blocks,
-            attention_mask=attention_mask,
-            position_offset=position_offset,
-        )
+
+        hidden_states: jaxtyping.Float[torch.Tensor, "batch seq hidden_dim"] = x
+        for block in self.blocks:
+            hidden_states = block(
+                hidden_states, attention_mask=attention_mask, position_offset=position_offset
+            )
+
         hidden_states = self.ln_f(hidden_states)
-        logits = self._compute_logits(hidden_states)
+
+        logits: jaxtyping.Float[torch.Tensor, "batch seq vocab"]
+        logits = self.lm_head(hidden_states)
 
         return outputs.ForwardOutput(logits=logits)
 
