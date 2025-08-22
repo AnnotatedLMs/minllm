@@ -15,29 +15,39 @@ class RoPEBase(nn.Module):
     """
     Base class for Rotary Position Embeddings (RoPE).
 
-    Originates from:
-    - Su et al. RoFormer. https://arxiv.org/abs/2104.09864
+    Scholarship:
+    - Su et al. RoFormer, 2021. https://arxiv.org/abs/2104.09864
 
-    Core RoPE concepts:
-    - Position encoded as rotation angle: pos 0 = 0°, pos 1 = θ, pos 2 = 2θ
-    - Different dimension pairs rotate at different frequencies
-    - After rotation, dot product depends only on relative position (i-j)
-    - Unlike learned embeddings, RoPE can extrapolate beyond training length
+    Significance:
+    Encodes position through rotation rather than addition, enabling extrapolation beyond training length.
+    Mathematical rotations preserve magnitude while encoding relative position through phase differences.
+    Provides foundation for both precomputed and dynamic RoPE implementations.
 
-    The rotation mathematics:
-    1. Split dimensions into pairs: [d0,d1], [d2,d3], ..., [d_{n-2},d_{n-1}]
-    2. Each pair rotates in its 2D plane at frequency θ^(2i/d)
-    3. Lower dims rotate faster (more position-sensitive)
-    4. Higher dims rotate slower (more semantically stable)
+    Init:
+    Registers inverse frequencies as a buffer (non-learnable constants):
+        self.register_buffer("inv_freq", inv_freq)  # Shape: [dim_half]
+    These frequencies follow θ_i = 1/(theta^(2i/dim)) creating a geometric progression.
+    Optional linear scaling can be configured for context extension.
 
-    This base class provides:
-    - Frequency computation
-    - Dynamic sin/cos calculation
-    - Precomputation utilities
+    Step-by-step control flow:
+    1. Initialize with dimension and base frequency theta (typically 10000)
+    2. Compute inverse frequencies using geometric progression formula
+    3. Store frequencies as buffer for use by subclasses
+    4. Subclasses use these to generate sin/cos values for rotation
+    5. Apply 2D rotations to dimension pairs during forward pass
 
-    Subclasses implement specific application strategies:
-    - PrecomputedRoPE: Precompute all positions for efficiency
-    - PartialRoPE: Apply to subset of dimensions
+    Learning process:
+    - This module contains no learnable parameters.
+    - The inverse frequencies are fixed mathematical constants derived from theta and dimensions.
+    - Rotations are deterministic transformations based on position indices.
+
+    - Architectural benefit:
+        - Rotation preserves vector magnitude unlike addition, maintaining semantic strength
+        - Position encoded through phase rather than magnitude prevents gradient instability
+        - Orthogonal transformation ensures stable training dynamics
+        - Enables natural extrapolation beyond training length (rotation patterns are consistent)
+        - Relative position emerges from phase difference in dot product (no explicit modeling needed)
+        - Position and content remain separable throughout the network
     """
 
     def __init__(

@@ -9,70 +9,50 @@ from torch import nn
 from torch.nn import attention as torch_attention
 from torch.nn import functional as F
 
+# Try to import FlashMLA - will be optional
+try:
+    # Third Party
+    from flash_mla import flash_attn_varlen_qkvpacked_func
 
-class MultiHeadReshapeMixin:
+    FLASH_MLA_AVAILABLE = True
+except ImportError:
+    FLASH_MLA_AVAILABLE = False
+
+
+class ManualSDPAMixin:
     """
-    Mixin for reshaping tensors between multi-head and standard formats.
+    Mixin that provides manual scaled dot-product attention (SDPA) computation.
 
-    Variation: Split hidden dimension into multiple heads
-    Computation: Reshape and transpose operations
-    Effect: Enables parallel attention computation across heads
-    """
+    Scholarship:
+    Attention Is All You Need, 2017, https://arxiv.org/pdf/1706.03762, 3.2
 
-    def _reshape_to_multihead(
-        self,
-        tensor: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"],
-        batch_size: int,
-        seq_len: int,
-        num_heads: int,
-        head_dim: int,
-    ) -> jaxtyping.Float[torch.Tensor, "batch n_heads seq_len head_dim"]:
-        """
-        Reshape tensor for multi-head attention computation.
-        """
-        # First reshape to separate head dimension
-        reshaped: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads head_dim"]
-        reshaped = tensor.view(batch_size, seq_len, num_heads, head_dim)
+    Significance:
+    Enables tokens to attend to each other based on learned similarities.
+    Scaling prevents gradients from vanishing when dot products get large.
 
-        # Transpose to put heads before sequence
-        multihead: jaxtyping.Float[torch.Tensor, "batch n_heads seq head_dim"]
-        multihead = reshaped.transpose(1, 2)
+    Init:
+    This mixin has no initialization or learnable parameters.
+    It provides computational methods used by attention modules.
 
-        return multihead
+    Step-by-step control flow (_compute_manual_attention):
+    1. Compute attention scores via dot product between Q and K
+    2. Scale scores (by 1/sqrt(head_dim) or custom attention_scale)
+    3. Apply causal mask to prevent attending to future tokens
+    4. Apply padding mask to ignore padding tokens
+    5. Convert scores to probabilities via softmax
+    6. Apply dropout for regularization (during training)
+    7. Weight values by attention probabilities
 
-    def _merge_heads(
-        self,
-        tensor: jaxtyping.Float[torch.Tensor, "batch n_heads seq_len head_dim"],
-        hidden_dim: int,
-    ) -> jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]:
-        """
-        Merge attention heads back to single tensor.
-        """
-        batch_size, num_heads, seq_len, head_dim = tensor.shape
+    Learning/Optimization process:
+    - This mixin contains no learnable parameters.
+    - It implements the mathematical operations of attention: QK^T/√d followed by softmax and weighted sum.
+    - The scaling factor can be customized via attention_scale parameter (e.g., for YaRN adjustments).
 
-        # Transpose heads and sequence dimensions
-        x_transposed: jaxtyping.Float[torch.Tensor, "batch seq_len n_heads head_dim"]
-        x_transposed = tensor.transpose(1, 2).contiguous()
-
-        # Reshape to combine heads
-        x_merged: jaxtyping.Float[torch.Tensor, "batch seq_len hidden_dim"]
-        x_merged = x_transposed.view(batch_size, seq_len, hidden_dim)
-
-        return x_merged
-
-
-class ManualAttentionMixin:
-    """
-    Mixin that provides manual attention computation (non-Flash path).
-
-    Variation: Explicit attention computation with flexible masking
-    Computation: Scores → Masks → Softmax → Dropout → Weighted Values
-    Effect: Provides fallback when Flash Attention is not available
-
-    This mixin unifies the manual attention logic from both MultiHeadAttention
-    and GroupedQueryAttention, providing flexibility for different masking strategies
-    while keeping the core attention computation pure (no projections or output dropout).
-    """
+    - Purpose in architecture:
+      - Computes similarity between queries and keys to find relevant tokens
+      - Softmax ensures attention weights sum to 1, creating a weighted average
+      - Enables Q/K/V projections (in parent classes) to learn what features matter
+      - Result: Allows model to dynamically select which tokens to use for predictions"""
 
     def _compute_attention_scores(
         self,
@@ -218,19 +198,6 @@ class ManualAttentionMixin:
         causal_mask: typing.Optional[torch.Tensor] = None,
         attn_dropout: typing.Optional[nn.Dropout] = None,
     ) -> jaxtyping.Float[torch.Tensor, "batch n_heads seq_q head_dim"]:
-        """
-        Compute attention manually (non-Flash path).
-
-        The standard attention process:
-        1. Compute attention scores - dot product between queries and keys
-        2. Apply causal mask - prevent attending to future positions
-        3. Apply attention mask - handle padding tokens
-        4. Convert to probabilities - softmax ensures weights sum to 1
-        5. Apply dropout - regularization during training
-        6. Apply attention to values - weighted average of value vectors
-
-        Output projection and residual dropout are handled by the parent module.
-        """
         scores: jaxtyping.Float[torch.Tensor, "batch n_heads seq_q seq_k"]
         scores = self._compute_attention_scores(q, k, head_dim, attention_scale)
 
@@ -289,5 +256,132 @@ class FlashAttentionMixin:
                 is_causal=is_causal and attention_mask is None,
                 enable_gqa=enable_gqa,
             )
+
+        return output
+
+
+class FlashMLAMixin:
+    """
+    Mixin that provides FlashMLA optimized kernel for Multi-head Latent Attention.
+
+    Scholarship:
+    FlashMLA Deep-Dive, 2025, https://github.com/deepseek-ai/FlashMLA
+    FlashAttention-3, 2024, https://arxiv.org/abs/2407.08608
+
+    Significance:
+    Achieves up to 660 TFlops in compute-bound MLA decoding scenarios.
+    Uses "seesaw" scheduling to overlap CUDA Core and Tensor Core operations with one output matrix.
+
+    Init:
+    This mixin has no initialization or learnable parameters.
+    It wraps FlashMLA's optimized CUDA kernels for SM90/SM100 GPUs.
+
+    Step-by-step control flow (_compute_flash_mla_attention):
+    1. Reshape tensors from batch format to varlen format
+    2. Pack Q, K, V into single tensor for kernel efficiency
+    3. Create cumulative sequence lengths for batch handling
+    4. Call optimized FlashMLA kernel with packed data
+    5. Reshape output back to standard batch format
+
+    Learning/Optimization process:
+    - This mixin contains no learnable parameters.
+    - It implements the same mathematical operations as ManualSDPAMixin but with optimized kernels.
+
+    - Kernel optimizations (compute-bound scenario):
+      - Seesaw scheduling: Alternates operations between two warpgroups with one output matrix
+      - Fine-grained TMA copy-GEMM pipelining: Overlaps memory access with computation
+      - Achieves 80% Tensor Core utilization on H800 GPUs
+
+    - Purpose in architecture:
+      - Provides faster training and inference for MLA models
+      - Reduces memory usage through online softmax computation
+      - Enables efficient handling of compressed attention dimensions
+    """
+
+    @staticmethod
+    def is_available() -> bool:
+        """Check if FlashMLA is available."""
+        if not FLASH_MLA_AVAILABLE:
+            return False
+
+        # Check GPU capability (needs SM90 or SM100)
+        if torch.cuda.is_available():
+            capability = torch.cuda.get_device_capability()
+            return capability in [(9, 0), (10, 0)]
+        return False
+
+    def _compute_flash_mla_attention(
+        self,
+        queries_full: jaxtyping.Float[torch.Tensor, "batch heads seq total_dim"],
+        keys_full: jaxtyping.Float[torch.Tensor, "batch heads seq total_dim"],
+        values: jaxtyping.Float[torch.Tensor, "batch heads seq head_dim"],
+        total_dim: int,
+        is_causal: bool = True,
+        attention_scale: typing.Optional[float] = None,
+        attn_dropout: typing.Optional[nn.Dropout] = None,
+    ) -> jaxtyping.Float[torch.Tensor, "batch heads seq head_dim"]:
+        """
+        Compute MLA attention using FlashMLA kernels (training mode).
+
+        Args:
+            queries_full: Queries with content and position features [batch, heads, seq, total_dim]
+            keys_full: Keys with content and position features [batch, heads, seq, total_dim]
+            values: Value vectors [batch, heads, seq, head_dim]
+            total_dim: Total dimension (head_dim + rope_dim)
+            is_causal: Whether to apply causal masking
+            attention_scale: Custom attention scale (includes mscale for YaRN)
+            attn_dropout: Dropout module (not supported in FlashMLA)
+
+        Returns:
+            Attention output [batch, heads, seq, head_dim]
+        """
+        if not FLASH_MLA_AVAILABLE:
+            raise RuntimeError(
+                "FlashMLA is not available. Please install it with: "
+                "pip install git+https://github.com/deepseek-ai/FlashMLA.git"
+            )
+        if attn_dropout != 0.0:
+            raise RuntimeError("FlashMLA does not support dropout.")
+
+        batch_size, num_heads, seq_len, _ = queries_full.shape
+        head_dim = values.shape[-1]
+
+        # FlashMLA expects varlen format: [total_tokens, num_heads, dim]
+        # Reshape from [batch, heads, seq, dim] to [batch * seq, heads, dim]
+        queries_flat = queries_full.transpose(1, 2).reshape(
+            batch_size * seq_len, num_heads, total_dim
+        )
+        keys_flat = keys_full.transpose(1, 2).reshape(batch_size * seq_len, num_heads, total_dim)
+        values_flat = values.transpose(1, 2).reshape(batch_size * seq_len, num_heads, head_dim)
+
+        # Pack QKV for FlashMLA (it expects concatenated format)
+        # [batch * seq, heads, total_dim + total_dim + head_dim]
+        qkv_packed = torch.cat([queries_flat, keys_flat, values_flat], dim=-1)
+
+        # Create cumulative sequence lengths for varlen format
+        cu_seqlens = torch.arange(
+            0, (batch_size + 1) * seq_len, seq_len, dtype=torch.int32, device=queries_full.device
+        )
+
+        # Compute softmax scale if not provided
+        if attention_scale is None:
+            attention_scale = 1.0 / math.sqrt(total_dim)
+
+        # Call FlashMLA varlen function
+        output, lse = flash_attn_varlen_qkvpacked_func(
+            qkv=qkv_packed,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=seq_len,
+            head_dim_qk=total_dim,  # Q/K dimension (includes RoPE)
+            dropout_p=attn_dropout,
+            softmax_scale=attention_scale,
+            causal=is_causal,
+            deterministic=False,
+            is_varlen=True,
+        )
+
+        # Reshape output back to [batch, heads, seq, head_dim]
+        output = output.reshape(batch_size, seq_len, num_heads, head_dim)
+        output = output.transpose(1, 2).contiguous()
 
         return output

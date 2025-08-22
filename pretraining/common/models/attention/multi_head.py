@@ -9,29 +9,40 @@ from torch import nn
 # Project
 from pretraining.common.models.attention import attention_mixins
 from pretraining.common.models.attention import projection_mixins
+from pretraining.common.models.attention import reshape_mixins
 
 
 class MultiHeadAttention(
     nn.Module,
     projection_mixins.FusedQKVProjectionMixin,
-    attention_mixins.MultiHeadReshapeMixin,
-    attention_mixins.ManualAttentionMixin,
+    reshape_mixins.MultiHeadReshapeMixin,
+    attention_mixins.ManualSDPAMixin,
     attention_mixins.FlashAttentionMixin,
 ):
     """
-    Multi-Head Attention (MHA) - The classic attention pattern.
+    Multi-Head Attention (MHA) - The standard parallel attention mechanism.
+    https://arxiv.org/pdf/1706.03762 Section 3.2.2
 
-    Used by: GPT-2
+    Inspired by:
+    Transformer, Vaswani et al. - https://arxiv.org/abs/1706.03762
 
-    Variation: Every attention head gets its own key and value vectors
-    Computation: Uses a combined QKV projection for efficiency
-    Effect: Each head can specialize in different types of relationships (syntax, semantics, etc.)
+    Step-by-step control flow (how mixins work together):
+    1. FusedQKVProjectionMixin: Compute Q, K, V from single fused projection
+    2. MultiHeadReshapeMixin: Reshape flat projections to multi-head format
+    3. MultiHeadReshapeMixin: Transpose to attention format [batch, heads, seq, head_dim]
+    4. FlashAttentionMixin/ManualSDPAMixin: Compute scaled dot-product attention
+    5. MultiHeadReshapeMixin: Merge heads back to flat representation
+    6. Output projection: Final linear layer back to hidden_dim
 
-    Variation: Relies on learned position embeddings in the input
-    Computation: Position information added before attention (not during)
-    Effect: Model learns fixed positional patterns up to max training length
+    Learning process (how each mixin affects training):
+    - FusedQKVProjectionMixin: Fused projection learns Q, K, V transformations
+    - MultiHeadReshapeMixin: NO learning - just reshapes tensors
+    - FlashAttentionMixin/ManualSDPAMixin: NO learning - just computes attention mechanism
+    - Output projection: Learns to combine multi-head outputs
 
-    See forward() for the specific flow: projection → split → attention → merge → output
+    Key implementation detail:
+    - Position encoding: Uses learned embeddings added before this layer
+    - Causal masking: Applied within attention to prevent future token visibility
     """
 
     def __init__(

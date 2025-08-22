@@ -10,11 +10,14 @@ from torch import nn
 class MLACompressionMixin:
     """
     Mixin for Multi-head Latent Attention (MLA) compression.
-    https://arxiv.org/pdf/2412.19437
+
+    Scholarship:
+    Deepseek-V2, 2024, https://arxiv.org/pdf/2405.04434, 2.1.2
+    Deepseek-V3, 2025, https://arxiv.org/pdf/2412.19437, 2.1.1
 
     Significance:
     Makes attention use less memory by squishing inputs into smaller spaces first.
-    Instead of working with huge hidden_dim, works with smaller compression_dim.
+    Learned linear weights ensure we compress in a way that doesn't hurt downstream performance.
 
     Init:
     The compression layers are defined in MultiHeadLatentAttention as:
@@ -28,11 +31,25 @@ class MLACompressionMixin:
     4. Return both small versions
 
     Learning process:
-    - Q compression: Learns which dimensions of the input create high dot products with relevant keys
-    - KV compression: Learns which dimensions help tokens match queries (K) and which contain useful content (V)
-    - Both throw away redundant dimensions that don't affect attention patterns
+    - Q compression:
+      - Learns to transform inputs into query vectors that have high similarity with relevant keys
+      - When predicted token is wrong: loss increases, producing larger gradients
+      - Gradients signal that current query vectors have low similarity with keys of helpful tokens
+      - Query projection weights adjust to transform inputs into queries that better align with useful keys
+      - Result: the linear transformation learns to produce compressed queries that attend to relevant context
 
-    Used by: DeepSeek-V3's Multi-head Latent Attention
+    - KV compression:
+      - K (Key): Learns to transform inputs into keys that are distinguishable by queries
+        - When wrong tokens get high attention: gradients signal keys aren't differentiating helpful from unhelpful tokens
+        - Key projection weights adjust to produce keys that make relevant tokens more distinct
+        - Result: the transformation learns to create keys that help queries find the right tokens
+
+      - V (Value): Learns to transform inputs into values containing prediction-relevant information
+        - When prediction is wrong: gradients signal that attended values lack useful information
+        - Value projection weights adjust to preserve information dimensions that improve predictions
+        - Result: the transformation learns to extract and compress the most predictive features
+
+    - The weight matrices learn transformations that preserve task-relevant information while compressing dimension
     """
 
     def _compress_inputs(

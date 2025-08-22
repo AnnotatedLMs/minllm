@@ -7,7 +7,7 @@ import torch
 
 # Project
 from pretraining.common.models.architectures import deepseek3
-from pretraining.common.models.attention import flash_mla_mixin
+from pretraining.common.models.attention import attention_mixins
 from pretraining.configs import core
 from pretraining.configs import loader
 from pretraining.configs.model.architectures import deepseek
@@ -40,7 +40,7 @@ def main(trainer_config: core.TrainerConfig[deepseek.DeepSeek3Config]) -> None:
 
     # Check if FlashMLA is available and adjust config if needed
     if trainer_config.llm.transformer.attention.use_flash_attention:
-        if flash_mla_mixin.FlashMLAMixin.is_available():
+        if attention_mixins.FlashMLAMixin.is_available():
             log.info("FlashMLA is available and will be used for attention computation")
         else:
             log.warning("FlashMLA requested but not available. Falling back to manual attention.")

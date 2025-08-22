@@ -18,3 +18,4 @@ pretraining/data/sample/fineweb10b
 posttraining/
 
 checkpoints/
+.claude/

@@ -102,13 +102,13 @@ class TestLlama3TransformerBlock:
 
 class TestDeepSeek3TransformerBlock:
     @pytest.fixture
-    def partial_rope_module(self) -> partial_rope.PartialRoPE:
+    def partial_rope_module(self) -> partial_rope.DecoupledRoPE:
         """Create partial RoPE for DeepSeek."""
-        return partial_rope.PartialRoPE(dim=64, theta=10000.0)
+        return partial_rope.DecoupledRoPE(dim=64, theta=10000.0)
 
     @pytest.fixture
     def deepseek_block(
-        self, partial_rope_module: partial_rope.PartialRoPE
+        self, partial_rope_module: partial_rope.DecoupledRoPE
     ) -> deepseek3_blocks.DeepSeek3TransformerBlock:
         """Create a DeepSeek-V3 transformer block."""
         return deepseek3_blocks.DeepSeek3TransformerBlock(

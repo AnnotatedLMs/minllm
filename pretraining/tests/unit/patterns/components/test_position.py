@@ -96,14 +96,14 @@ class TestPartialRoPE:
     """Test PartialRoPE implementation for DeepSeek."""
 
     @pytest.fixture
-    def partial_rope_module(self) -> partial_rope.PartialRoPE:
+    def partial_rope_module(self) -> partial_rope.DecoupledRoPE:
         """Create a PartialRoPE module."""
-        return partial_rope.PartialRoPE(
+        return partial_rope.DecoupledRoPE(
             dim=64,  # rope_dim, not full head_dim
             theta=10000.0,
         )
 
-    def test_partial_rope_forward(self, partial_rope_module: partial_rope.PartialRoPE) -> None:
+    def test_partial_rope_forward(self, partial_rope_module: partial_rope.DecoupledRoPE) -> None:
         """Test PartialRoPE forward pass."""
         batch_size, num_heads, seq_len, rope_dim = 2, 8, 10, 64
         x = torch.randn(batch_size, num_heads, seq_len, rope_dim)
@@ -117,7 +117,7 @@ class TestPartialRoPE:
         assert not torch.allclose(output, x)
 
     def test_partial_rope_no_position_offset(
-        self, partial_rope_module: partial_rope.PartialRoPE
+        self, partial_rope_module: partial_rope.DecoupledRoPE
     ) -> None:
         """Test PartialRoPE doesn't accept position_offset."""
         x = torch.randn(2, 8, 10, 64)

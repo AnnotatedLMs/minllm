@@ -208,13 +208,13 @@ class TestMultiHeadLatentAttention:
     """Test multi-head latent attention (DeepSeek style)."""
 
     @pytest.fixture
-    def partial_rope_module(self) -> partial_rope.PartialRoPE:
+    def partial_rope_module(self) -> partial_rope.DecoupledRoPE:
         """Create PartialRoPE for MLA."""
-        return partial_rope.PartialRoPE(dim=64, theta=10000.0)
+        return partial_rope.DecoupledRoPE(dim=64, theta=10000.0)
 
     @pytest.fixture
     def mla(
-        self, partial_rope_module: partial_rope.PartialRoPE
+        self, partial_rope_module: partial_rope.DecoupledRoPE
     ) -> multi_latent.MultiHeadLatentAttention:
         """Create MultiHeadLatentAttention instance."""
         return multi_latent.MultiHeadLatentAttention(

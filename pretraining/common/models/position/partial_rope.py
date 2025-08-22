@@ -9,23 +9,41 @@ from pretraining.common.models.position import rope
 from pretraining.common.models.position import yarn_mixins
 
 
-class PartialRoPE(rope.RoPEBase, yarn_mixins.YaRNScalingMixin):
+class DecoupledRoPE(rope.RoPEBase, yarn_mixins.YaRNScalingMixin):
     """
-    RoPE applied to only a subset of head dimensions with optional YaRN scaling.
+    Applies rotary position embeddings to position-only features in decoupled RoPE strategy.
 
-    Originates from:
-    - Su et al. RoFormer. https://arxiv.org/abs/2104.09864
+    Scholarship:
+    - Su et al. RoFormer, 2021. https://arxiv.org/abs/2104.09864
+    - Deepseek-V2, 2024, https://arxiv.org/pdf/2405.04434, Section 2.1.3
 
-    Used by: DeepSeek-V3's Multi-head Latent Attention (MLA)
+    Significance:
+    Enables aggressive KV compression by separating position from content processing.
+    Position features get rotary embeddings while compressed content stays untouched.
+    This decoupling allows the model to cache position and content separately.
 
-    Variation: Applies RoPE to only rope_dim dimensions (e.g., 64 out of 128)
-    Computation: Dynamic frequency calculation for position-only features
-    Effect: Model learns to separate semantic content from positional information
+    Init:
+    Inherits from RoPEBase which registers inverse frequencies:
+        self.register_buffer("inv_freq", inv_freq)  # Mathematical constants for rotation
+    YaRN mixin provides scaling methods but doesn't initialize anything.
 
-    Supports YaRN scaling for context extension:
-    - Pretraining: 4K context (no YaRN)
-    - Phase 1: 4K → 32K (YaRN scale_factor = 8)
-    - Phase 2: 32K → 128K (YaRN scale_factor = 32)
+    Step-by-step control flow (forward):
+    1. Receive position features of shape [batch, heads, seq, rope_dim]
+    2. Compute sin/cos values dynamically based on sequence positions
+    3. Expand sin/cos for all heads and batch dimensions
+    4. Apply 2D rotation to each dimension pair
+    5. Return rotated position features
+
+    Learning process:
+    - This module contains no learnable parameters.
+    - The inverse frequencies are fixed mathematical constants based on theta and dimensions.
+    - Rotations are deterministic transformations that encode absolute position.
+
+    - Architectural benefit:
+      - Position features flow through separate gradient paths from content
+      - Allows content compression (W_DKV) to focus purely on semantic information
+      - Position-only rotations preserve fine-grained location awareness
+      - During inference, rotated positions can be cached independently
     """
 
     def __init__(
@@ -46,28 +64,54 @@ class PartialRoPE(rope.RoPEBase, yarn_mixins.YaRNScalingMixin):
         super().__init__(dim, theta=theta, linear_scaling=None)
 
         # YaRN state - will be set during context extension
-        self.yarn_config = None
         self.yarn_mscale = 1.0
+        self.yarn_scale_factor = 1.0
+        self.yarn_original_context_len = None
 
-    def _initialize_yarn_scaling(self) -> None:
-        """Initialize YaRN scaling based on configuration."""
-        config = self.yarn_config
+    def update_for_context_extension(
+        self,
+        new_max_seq_len: int,
+        original_context_len: int = 4096,
+        beta_fast: float = 32.0,
+        beta_slow: float = 1.0,
+        extrapolation_factor: float = 1.0,
+        attn_factor: float = 1.0,
+        mscale_all_dim: float = 0.1,
+    ) -> None:
+        """
+        Update RoPE frequencies for context extension training phase.
 
-        # Apply YaRN scaling to frequencies
-        scaled_inv_freq, mscale = self._apply_yarn_scaling(
+        This method is called when transitioning between training phases:
+        - Start of Phase 1: Update from 4K to 32K
+        - Start of Phase 2: Update from 32K to 128K
+
+        Args:
+            new_max_seq_len: New maximum sequence length
+            original_context_len: Original pretraining context length
+            beta_fast: YaRN beta_fast parameter (default: 32)
+            beta_slow: YaRN beta_slow parameter (default: 1)
+            extrapolation_factor: Extrapolation factor (default: 1)
+            attn_factor: Attention scaling factor (default: 1)
+            mscale_all_dim: mscale coefficient (default: 0.1)
+        """
+        # Use mixin to compute scaled frequencies
+        scaled_inv_freq, mscale, scale_factor = self.compute_yarn_scaling_for_context_extension(
+            # buffer defined in RoPEBase
             self.inv_freq,
-            config.scale_factor,
-            config.beta_fast,
-            config.beta_slow,
-            config.original_context_len,
-            config.extrapolation_factor,
-            config.attn_factor,
-            config.mscale_all_dim,
+            new_max_seq_len,
+            original_context_len,
+            beta_fast,
+            beta_slow,
+            extrapolation_factor,
+            attn_factor,
+            mscale_all_dim,
         )
 
-        # Update stored frequencies and mscale
+        # Update our buffer with the scaled frequencies
         self.register_buffer("inv_freq", scaled_inv_freq, persistent=False)
         self.yarn_mscale = mscale
+        self.yarn_scale_factor = scale_factor
+        self.yarn_original_context_len = original_context_len
 
     def get_attention_scale_factor(self) -> float:
         """

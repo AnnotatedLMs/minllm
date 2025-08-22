@@ -63,8 +63,10 @@ ignore = [
 
 [dependency-groups]
 dev = [
+    "beartype>=0.21.0",
     "pytest>=8.4.1",
     "ruff>=0.9.4",
+    "typeguard>=4.4.4",
 ]
 
 [tool.isort]

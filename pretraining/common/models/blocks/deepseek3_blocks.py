@@ -36,8 +36,8 @@ class DeepSeek3TransformerBlock(nn.Module):
         head_dim: int,
         kv_compression_dim: int,
         query_compression_dim: int,
-        key_rope_module: partial_rope.PartialRoPE,  # Separate RoPE for keys (with YaRN)
-        query_rope_module: partial_rope.PartialRoPE,  # Separate RoPE for queries (no YaRN)
+        key_rope_rotation: partial_rope.DecoupledRoPE,  # Rotation module for keys (with YaRN)
+        query_rope_rotation: partial_rope.DecoupledRoPE,  # Rotation module for queries (no YaRN)
         rope_dim: int,
         num_experts: int,
         num_experts_per_token: int,
@@ -62,8 +62,8 @@ class DeepSeek3TransformerBlock(nn.Module):
             head_dim=head_dim,
             kv_compression_dim=kv_compression_dim,
             query_compression_dim=query_compression_dim,
-            key_rope_module=key_rope_module,
-            query_rope_module=query_rope_module,
+            key_rope_rotation=key_rope_rotation,
+            query_rope_rotation=query_rope_rotation,
             rope_dim=rope_dim,
             dropout=dropout,
             is_causal=True,

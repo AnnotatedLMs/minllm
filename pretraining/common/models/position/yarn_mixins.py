@@ -9,24 +9,39 @@ import torch
 
 class YaRNScalingMixin:
     """
-    Mixin for YaRN scaling.
-    Peng et al., 2023, https://arxiv.org/pdf/2309.00071
+    Mixin for YaRN (Yet another RoPE extensioN) frequency scaling.
 
-    Variation: Dynamic context extension with beta-based correction
-    Computation: Interpolates frequencies with correction range
-    Effect: Extends context length while preserving local and global patterns
+    Scholarship:
+    - Peng et al., 2023, https://arxiv.org/pdf/2309.00071
 
-    Used by: DeepSeek-V3 during context extension training phases
+    Significance:
+    Enables context window extension while preserving both local and global position patterns.
+    YaRN selectively scales different frequency bands - keeping high frequencies intact for local precision
+    while interpolating low frequencies for extended range.
 
-    The YaRN algorithm differs from standard RoPE scaling:
-    1. Uses beta_fast/beta_slow to determine correction range
-    2. Applies extrapolation factor for dimensions outside range
-    3. Includes mscale adjustment for attention stability
+    Init:
+    This mixin has no initialization. It provides utility methods for modules that contain RoPE:
+        self.inv_freq: torch.Tensor  # Inverse frequencies buffer in the RoPE module
+        self.theta: float  # Base frequency parameter (typically 10000)
 
-    Context extension phases (DeepSeek-V3):
-    - Pretraining: 4K context
-    - Phase 1: 4K → 32K (scale_factor = 8)
-    - Phase 2: 32K → 128K (scale_factor = 32)
+    Step-by-step control flow (compute_yarn_scaling_for_context_extension):
+    1. Calculate scale factor from new vs original context lengths
+    2. Identify correction range using beta parameters to find frequency bands
+    3. Create smooth ramp mask for transitioning between scaled/unscaled regions
+    4. Apply interpolation to low frequencies, extrapolation to high frequencies
+    5. Compute mscale factor for attention stability at extended lengths
+    6. Return scaled frequencies and adjustment factors
+
+    Learning process:
+    - This mixin contains no learnable parameters.
+    - Applies fixed mathematical transformations based on the YaRN algorithm.
+
+    - Architectural benefit:
+      - High frequency dimensions (small wavelengths) stay unscaled to preserve local token relationships
+      - Low frequency dimensions (large wavelengths) get interpolated for extended context
+      - Smooth transition via ramp function prevents abrupt frequency changes
+      - mscale adjustment prevents attention entropy collapse at longer sequences
+      - Result: Model can attend to extended contexts without losing fine-grained positional discrimination
     """
 
     def _find_yarn_correction_dim(
@@ -168,8 +183,9 @@ class YaRNScalingMixin:
 
         return scaled_inv_freq.to(inv_freq.dtype), mscale
 
-    def update_for_context_extension(
+    def compute_yarn_scaling_for_context_extension(
         self,
+        current_inv_freq: torch.Tensor,
         new_max_seq_len: int,
         original_context_len: int = 4096,
         beta_fast: float = 32.0,
@@ -177,15 +193,19 @@ class YaRNScalingMixin:
         extrapolation_factor: float = 1.0,
         attn_factor: float = 1.0,
         mscale_all_dim: float = 0.1,
-    ) -> None:
+    ) -> typing.Tuple[torch.Tensor, float, float]:
         """
-        Update RoPE frequencies for context extension training phase.
+        Compute YaRN-scaled frequencies for context extension.
 
-        This method is called when transitioning between training phases:
+        This method computes the scaled frequencies but doesn't update any buffers.
+        The module using this mixin should handle buffer updates.
+
+        This is called when transitioning between training phases:
         - Start of Phase 1: Update from 4K to 32K
         - Start of Phase 2: Update from 32K to 128K
 
         Args:
+            current_inv_freq: Current inverse frequencies
             new_max_seq_len: New maximum sequence length
             original_context_len: Original pretraining context length
             beta_fast: YaRN beta_fast parameter (default: 32)
@@ -193,13 +213,16 @@ class YaRNScalingMixin:
             extrapolation_factor: Extrapolation factor (default: 1)
             attn_factor: Attention scaling factor (default: 1)
             mscale_all_dim: mscale coefficient (default: 0.1)
+
+        Returns:
+            Tuple of (scaled_inv_freq, mscale, scale_factor)
         """
         # Calculate new scale factor
         scale_factor = new_max_seq_len / original_context_len
 
         # Apply YaRN scaling to frequencies
         scaled_inv_freq, mscale = self._apply_yarn_scaling(
-            self.inv_freq,
+            current_inv_freq,
             scale_factor,
             beta_fast,
             beta_slow,
@@ -209,10 +232,4 @@ class YaRNScalingMixin:
             mscale_all_dim,
         )
 
-        # Update stored frequencies and mscale
-        self.register_buffer("inv_freq", scaled_inv_freq, persistent=False)
-        self.yarn_mscale = mscale
-
-        # Store current configuration
-        self.yarn_scale_factor = scale_factor
-        self.yarn_original_context_len = original_context_len
+        return scaled_inv_freq, mscale, scale_factor

@@ -9,13 +9,43 @@ from torch import nn
 
 class FusedQKVProjectionMixin:
     """
-    Mixin that provides fused QKV projection for attention mechanisms.
+    Mixin for fused Query, Key, Value projections in multi-head attention.
 
-    Variation: Fused/combined QKV projection (standard in MHA)
-    Computation: Single linear layer produces all three projections
-    Effect: More efficient than separate projections, better memory locality
+    Scholarship:
+    - Vaswani et al., Attention Is All You Need, 2017. https://arxiv.org/pdf/1706.03762
 
-    Used by: Multi-head attention (GPT-2, BERT, etc.)
+    Significance:
+    Enables parallel attention heads by projecting inputs into multiple representation subspaces.
+    Single fused projection is more efficient than three separate projections.
+    Each head learns to attend to different types of relationships between tokens.
+
+    Init:
+    This mixin has no initialization. It works with components defined in the attention module:
+        self.qkv_proj = nn.Linear(hidden_dim, 3 * num_heads * head_dim)  # Fused QKV projection
+
+    Step-by-step control flow (_compute_qkv_projections):
+    1. Apply single linear transformation producing 3x the hidden dimension
+    2. Split the output into three equal parts for Q, K, V
+    3. Return separate Q, K, V tensors for attention computation
+
+    Learning process:
+    - Fused QKV projection (self.qkv_proj: nn.Linear):
+      - Learns three distinct transformations within a single weight matrix
+      - Query portion learns to extract "what am I looking for" features
+      - Key portion learns to extract "what do I contain" features
+      - Value portion learns to extract "what information to pass forward" features
+
+      - When predictions are wrong: loss increases, producing gradients
+      - Gradients flow back through attention scores to all three projections simultaneously
+      - Q weights adjust to better identify what current token needs from context
+      - K weights adjust to better advertise what each token offers
+      - V weights adjust to better package useful information for next layers
+      - Result: Single matrix learns three complementary transformations that work together
+
+    - Efficiency benefit:
+      - Single matrix multiplication is faster than three separate ones
+      - Better memory locality and cache utilization
+      - Gradients for Q, K, V are computed together, improving optimization
     """
 
     def _compute_qkv_projections(
@@ -99,6 +129,10 @@ class MLAProjectionMixin:
     """
     Mixin for MLA projection from compressed to attention dimensions.
 
+    Scholarship:
+    Deepseek-V2, 2024, https://arxiv.org/pdf/2405.04434, 2.1.2
+    Deepseek-V3, 2025, https://arxiv.org/pdf/2412.19437, 2.1.1
+
     Significance:
     Takes tiny compressed representations and expands them back to full attention size.
     Keeps content (what the token says) separate from position (where the token is).
@@ -118,11 +152,33 @@ class MLAProjectionMixin:
     4. Return all components separately for later combination
 
     Learning process:
-    - Up-projections learn to reconstruct full dimensions from compressed versions
-    - Content projections learn semantic patterns that matter for attention
-    - Position projections learn which position relationships matter
+    - Key up-projection:
+      - Learns to expand compressed KV into keys that differentiate tokens for attention
+      - When attention patterns are wrong: gradients signal that expanded keys don't distinguish relevant from irrelevant tokens
+      - Weight matrix adjusts to produce keys that make important tokens stand out in dot products
+      - Result: transformation learns to reconstruct discriminative features from compressed representation
 
-    Used by: DeepSeek-V3's Multi-head Latent Attention
+    - Value up-projection:
+      - Learns to expand compressed KV into values containing useful information
+      - When predictions fail: gradients signal that expanded values lack necessary content
+      - Weight matrix adjusts to reconstruct information dimensions that improve next-token prediction
+      - Result: transformation learns to unpack predictive features from compressed representation
+
+    - Query up-projection:
+      - Learns to expand compressed queries to match with relevant keys
+      - When wrong tokens get attention: gradients signal that expanded queries align with unhelpful keys
+      - Weight matrix adjusts to produce queries that have higher dot products with useful token keys
+      - Result: transformation learns to reconstruct query features that find relevant context
+
+    - Position projections (RoPE):
+      - Key RoPE: Learns which positional relationships help queries find tokens
+        - Takes uncompressed input to preserve full positional information
+        - Weight matrix learns to extract position features that matter for token relevance
+      - Query RoPE: Learns positional features for finding tokens at relevant distances
+        - Works from compressed queries but focuses on position-specific dimensions
+        - Weight matrix learns to produce position encodings that identify useful relative positions
+
+    - All projections jointly optimize through attention scores to balance content and position matching
     """
 
     def _project_compressed_kv(

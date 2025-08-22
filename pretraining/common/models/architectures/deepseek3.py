@@ -88,13 +88,13 @@ class DeepSeek3(
         self.embedding_dropout = nn.Dropout(dropout) if dropout > 0 else None
 
         # Key RoPE: Will have YaRN applied during context extension
-        self.key_rope = partial_rope.PartialRoPE(
+        self.key_rope_rotation = partial_rope.DecoupledRoPE(
             dim=rope_dim,
             theta=rope_theta,
         )
 
         # Query RoPE: No YaRN, stays at original frequencies
-        self.query_rope = partial_rope.PartialRoPE(
+        self.query_rope_rotation = partial_rope.DecoupledRoPE(
             dim=rope_dim,
             theta=rope_theta,
         )
@@ -108,8 +108,8 @@ class DeepSeek3(
                     head_dim=head_dim,
                     kv_compression_dim=kv_compression_dim,
                     query_compression_dim=query_compression_dim,
-                    key_rope_module=self.key_rope,
-                    query_rope_module=self.query_rope,
+                    key_rope_rotation=self.key_rope_rotation,
+                    query_rope_rotation=self.query_rope_rotation,
                     rope_dim=rope_dim,
                     num_experts=num_experts,
                     num_experts_per_token=num_experts_per_token,
@@ -284,11 +284,8 @@ class DeepSeek3(
             new_max_seq_len: New maximum sequence length
             yarn_config: YaRN configuration for this phase
         """
-        # Store YaRN config in key RoPE module
-        self.key_rope.yarn_config = yarn_config
-
         # Apply YaRN scaling to key RoPE only
-        self.key_rope.update_for_context_extension(
+        self.key_rope_rotation.update_for_context_extension(
             new_max_seq_len=new_max_seq_len,
             original_context_len=yarn_config.original_context_len,
             beta_fast=yarn_config.beta_fast,

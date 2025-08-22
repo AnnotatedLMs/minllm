@@ -10,14 +10,15 @@ from torch import nn
 from pretraining.common.models.attention import attention_mixins
 from pretraining.common.models.attention import cache_mixins
 from pretraining.common.models.attention import projection_mixins
+from pretraining.common.models.attention import reshape_mixins
 from pretraining.common.models.position import rope
 
 
 class GroupedQueryAttention(
     nn.Module,
     projection_mixins.GroupedQKVProjectionMixin,
-    attention_mixins.MultiHeadReshapeMixin,
-    attention_mixins.ManualAttentionMixin,
+    reshape_mixins.MultiHeadReshapeMixin,
+    attention_mixins.ManualSDPAMixin,
     attention_mixins.FlashAttentionMixin,
     cache_mixins.CachedAttentionMixin,
 ):
